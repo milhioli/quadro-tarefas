@@ -4,8 +4,14 @@ Quadro semanal de tarefas, local e em pt-BR.
 
 - **Deck** à esquerda com as tarefas ainda não agendadas.
 - **Quadro** à direita, com colunas de segunda a sexta da semana atual e 34 linhas de 30 minutos (`05:00 – 05:30` até `21:30 – 22:00`).
-- Arraste uma tarefa do deck para uma célula, entre células ou de volta para o deck. Cada célula tem uma tarefa só: soltar numa ocupada **troca** as duas.
-- Também dá para agendar sem arrastar: no modal da tarefa, o campo **Quando** escolhe o dia e o horário. Horários ocupados aparecem desabilitados.
+- Arraste uma tarefa do deck para uma célula, entre células ou de volta para o deck. Cada horário tem uma tarefa só.
+- Uma tarefa pode ter **duração**: uma faixa de 30 min ou várias seguidas no mesmo dia (ex.: 05:00 – 20:00).
+  - Ela aparece como um cartão alto, que começa na célula do início.
+  - Para mudar a duração, **puxe a borda de baixo** do cartão (de 30 em 30 min) ou use o campo **Até** do modal.
+- Ao soltar sobre outra tarefa:
+  - se as duas têm o mesmo tamanho, elas **trocam** de lugar;
+  - se não, aparece o aviso de horário ocupado e nada muda.
+- Também dá para agendar sem arrastar: no modal da tarefa, o campo **Quando** escolhe o dia, o horário e até quando vai. Horários ocupados aparecem desabilitados.
 - Fora do quadro aparece o calendário brasileiro: mês, "Semana N de M", hoje e o próximo feriado.
 - **Feriados** aparecem como **bolinhas** no topo e nos cabeçalhos dos dias: vermelha para feriado nacional, azul para ponto facultativo (Carnaval e Corpus Christi). Clicar numa bolinha abre o modal com os feriados.
 - **Resetar quadro** devolve todas as tarefas ao deck, sem apagar nenhuma.
@@ -82,12 +88,16 @@ Se a senha for recusada, o topo mostra "A Apple recusou a senha de app" e o app 
 
 ```sh
 npm test            # Vitest: shared, server e web
-npm run typecheck   # TypeScript nos três pacotes
+npm run typecheck   # TypeScript nos três pacotes e no e2e
+npm run test:e2e    # Playwright no navegador (desktop e celular)
 ```
 
 - Os testes da API usam SQLite real em arquivo temporário.
 - Os testes do frontend rodam no jsdom, com uma API fake em memória que aplica as mesmas regras de posição do servidor.
-- O arraste em si não é simulável no jsdom. A lógica de "para onde a tarefa vai" fica em funções puras testadas (`shared/src/move.ts` e `web/src/lib/dnd.ts`), e o arraste real deve ser conferido no navegador.
+- O arraste, o layout de celular e as jornadas completas rodam no **Playwright**, na pasta `e2e/`:
+  - antes da primeira vez, rode `npx playwright install chromium`;
+  - o teste sobe o próprio servidor nas portas 3101/5273, com um banco temporário, então dá para rodar com o seu `npm run dev` aberto;
+  - para ver o relatório, use `npx playwright show-report e2e/playwright-report`.
 
 ## Estrutura
 

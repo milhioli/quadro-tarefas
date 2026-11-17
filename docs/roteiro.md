@@ -1,7 +1,14 @@
 <!-- Cópia versionada do roteiro aprovado em 17/11/2026. Ao mudar uma decisão, atualize este arquivo. -->
 # Plano — Quadro multiusuário: contas, grupos em tempo real, agendas por pessoa e tarefas com duração
 
-> **Status:** documento de arquitetura e roteiro. Nada será implementado agora (decisão do usuário em 17/11/2026). Cada fase vira um plano próprio quando for a vez dela.
+> **Status:** documento de arquitetura e roteiro. Cada fase vira um plano próprio quando for a vez dela.
+> **Andamento (17/11/2026):**
+> - **Fase 0 (E2E com Playwright 1.64.1):** feita e validada, 8 jornadas.
+> - **Fase 1 (tarefas com duração):** feita e validada, com 785 testes de unidade/integração e 12 jornadas E2E. As escolhas que o plano deixava em aberto:
+>   - os triggers de sobreposição no banco foram incluídos;
+>   - no celular, a tarefa longa aparece numa linha só, sem altura proporcional;
+>   - o modificador do overlay chama-se `keepOverlayUnderPointer`.
+> - **Pendente:** o teste humano das fases 0 e 1 (seção "Ao fim de cada fase") e as fases 2 a 4.
 > **Revisão 2 (17/11/2026):** o usuário esclareceu que 500 era só um exemplo: **não há teto de usuários** (ver "Crescer sem teto"). Privacidade, plano de incidente e retenção deixaram de ser pendências e viraram itens concretos (seção "Privacidade, incidente e retenção").
 > **Revisão 3 (17/11/2026):** os eventos da agenda ficam em memória enquanto a pessoa usa o app, e entra a **Fase 0: testes E2E no navegador** (Playwright), antes da Fase 1.
 > **Revisões incorporadas:** leitura independente do código para a Fase 1 (agente de planejamento) e parecer do `cybersecurity-reviewer` para as fases 2–4 (7 bloqueantes, 11 recomendados, 7 opcionais e 9 contradições com o CLAUDE.md/código — todos tratados; resumo na seção final). Os três itens que antes iam para o usuário ou o encarregado (privacidade, incidente e retenção) agora estão resolvidos na seção própria.
