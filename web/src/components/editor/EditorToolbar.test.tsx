@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Editor } from '@tiptap/react';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -54,6 +54,24 @@ describe('EditorToolbar', () => {
     await user.click(screen.getByRole('button', { name: 'Negrito' }));
     expect(JSON.stringify(editor.getJSON())).toContain('"bold"');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Negrito' })).toHaveAttribute('aria-pressed', 'true'));
+  });
+
+  it('o clique num botão não tira o foco do editor (mousedown sem ação padrão)', async () => {
+    const { editor, user } = setup();
+    // view.focus() é síncrono (o focus() do TipTap espera um frame).
+    editor.view.focus();
+    expect(editor.view.hasFocus()).toBe(true);
+
+    // fireEvent devolve false quando o handler chamou preventDefault.
+    expect(fireEvent.mouseDown(screen.getByRole('button', { name: 'Lista de tarefas (checkbox)' }))).toBe(false);
+    // Desfazer começa desabilitado (botão desabilitado não recebe mousedown): uma edição o habilita.
+    editor.commands.insertContent(' mais');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Desfazer' })).toBeEnabled());
+    expect(fireEvent.mouseDown(screen.getByRole('button', { name: 'Desfazer' }))).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: 'Lista de tarefas (checkbox)' }));
+    expect(editor.view.hasFocus()).toBe(true);
+    expect(editor.getJSON().content?.[0]?.type).toBe('taskList');
   });
 
   it('Lista de tarefas cria um checklist', async () => {

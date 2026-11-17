@@ -1,4 +1,15 @@
 import { useEditorState, type Editor } from '@tiptap/react';
+import type { MouseEvent } from 'react';
+
+/**
+ * O clique num botão não tira o foco do editor. Sem isto o botão fica com o
+ * foco e o TipTap só o devolve no frame seguinte: o que for digitado nesse
+ * intervalo se perde ou cai fora do bloco recém-criado (ex.: checklist).
+ * Pelo teclado (Tab, Enter, Espaço) os botões continuam funcionando.
+ */
+export function keepEditorFocus(event: MouseEvent<HTMLButtonElement>): void {
+  event.preventDefault();
+}
 
 export interface ToolbarState {
   bold: boolean;
@@ -73,6 +84,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
           aria-label={button.label}
           title={button.label}
           aria-pressed={state[button.key]}
+          onMouseDown={keepEditorFocus}
           onClick={() => button.run(editor)}
         >
           <span aria-hidden="true">{button.text}</span>
@@ -85,6 +97,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
         aria-label="Desfazer"
         title="Desfazer"
         disabled={!state.canUndo}
+        onMouseDown={keepEditorFocus}
         onClick={() => editor.chain().focus().undo().run()}
       >
         <span aria-hidden="true">↶</span>
@@ -95,6 +108,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
         aria-label="Refazer"
         title="Refazer"
         disabled={!state.canRedo}
+        onMouseDown={keepEditorFocus}
         onClick={() => editor.chain().focus().redo().run()}
       >
         <span aria-hidden="true">↷</span>
