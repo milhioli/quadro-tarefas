@@ -35,6 +35,24 @@ Abra <http://127.0.0.1:5173>. Use `127.0.0.1`, não `localhost`.
 - Os dados ficam em `server/data/quadro.sqlite`, que é criado na primeira execução e fica fora do git.
 - As portas e o caminho do banco podem ser trocados com um `.env` na raiz (veja o `.env.example`). Nenhuma chave é obrigatória.
 
+### Em outra máquina
+
+```sh
+git clone https://github.com/milhioli/quadro-tarefas.git
+cd quadro-tarefas
+npm install
+npx playwright install chromium   # só para o E2E; o ignore-scripts não baixa o navegador
+npm test && npm run test:e2e      # confere que está tudo de pé
+```
+
+- **O `.env` não vai pelo git.** Recrie a partir do `.env.example`, e só se for usar a agenda da Apple.
+- **As tarefas também não vão pelo git.** Elas ficam em `server/data/quadro.sqlite`. Para levar as tarefas:
+  1. Na máquina de origem, pare o `npm run dev`.
+  2. Copie `quadro.sqlite` e também `quadro.sqlite-wal` e `quadro.sqlite-shm`, se existirem: parte dos dados pode estar no `-wal`.
+  3. Na máquina nova, coloque os arquivos em `server/data/` antes de subir o servidor.
+- As decisões do projeto estão em `docs/plano-original.md` (a base) e `docs/roteiro.md` (as fases e o andamento).
+- Quem usa o Claude Code: o fluxo do `CLAUDE.md` depende de agentes e hooks que ficam na configuração do usuário (`~/.claude`), fora do repositório.
+
 ### Simular outra data (só em desenvolvimento)
 
 Acrescente `?hoje=AAAA-MM-DD` à URL, por exemplo:

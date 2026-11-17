@@ -4,11 +4,16 @@
 > **Status:** documento de arquitetura e roteiro. Cada fase vira um plano próprio quando for a vez dela.
 > **Andamento (17/11/2026):**
 > - **Fase 0 (E2E com Playwright 1.64.1):** feita e validada, 8 jornadas.
-> - **Fase 1 (tarefas com duração):** feita e validada, com 785 testes de unidade/integração e 12 jornadas E2E. As escolhas que o plano deixava em aberto:
+> - **Fase 1 (tarefas com duração):** feita e validada, com 786 testes de unidade/integração e 12 jornadas E2E. As escolhas que o plano deixava em aberto:
 >   - os triggers de sobreposição no banco foram incluídos;
 >   - no celular, a tarefa longa aparece numa linha só, sem altura proporcional;
 >   - o modificador do overlay chama-se `keepOverlayUnderPointer`.
-> - **Pendente:** o teste humano das fases 0 e 1 (seção "Ao fim de cada fase") e as fases 2 a 4.
+> - **E2E na máquina do usuário:** confirmado em 17/11/2026. A primeira rodada revelou uma corrida no foco da toolbar do editor, já corrigida (`keepEditorFocus`). O teste humano visual da Fase 1 (seção "Ao fim de cada fase") segue com o usuário.
+> - **Próximo passo: Fase 2.** Antes de escrever o plano dela, pergunte ao usuário:
+>   - (a) se é só contas e quadros rodando no 127.0.0.1 (**2a**, recomendado) ou já com deploy (**2b**: Docker, Caddy, Litestream, domínio e onde hospedar);
+>   - (b) quem pode criar conta: aprovação do admin (recomendado), só domínio(s) Workspace (`ALLOWED_GOOGLE_HD`), ou o domínio entra direto e o resto aguarda aprovação.
+>
+>   Depois: o plano da fase, a revisão do `cybersecurity-reviewer`, a aprovação e só então o código.
 > **Revisão 2 (17/11/2026):** o usuário esclareceu que 500 era só um exemplo: **não há teto de usuários** (ver "Crescer sem teto"). Privacidade, plano de incidente e retenção deixaram de ser pendências e viraram itens concretos (seção "Privacidade, incidente e retenção").
 > **Revisão 3 (17/11/2026):** os eventos da agenda ficam em memória enquanto a pessoa usa o app, e entra a **Fase 0: testes E2E no navegador** (Playwright), antes da Fase 1.
 > **Revisões incorporadas:** leitura independente do código para a Fase 1 (agente de planejamento) e parecer do `cybersecurity-reviewer` para as fases 2–4 (7 bloqueantes, 11 recomendados, 7 opcionais e 9 contradições com o CLAUDE.md/código — todos tratados; resumo na seção final). Os três itens que antes iam para o usuário ou o encarregado (privacidade, incidente e retenção) agora estão resolvidos na seção própria.

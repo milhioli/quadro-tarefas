@@ -4,7 +4,7 @@ Quadro semanal local, em pt-BR: deck de tarefas à esquerda e quadro à direita,
 
 - O repositório usa npm workspaces: `shared/` (regras puras e zod), `server/` (Fastify + `node:sqlite`) e `web/` (React + Vite).
 - Exige Node ≥ 24.
-- O plano original é a referência de decisões: `%USERPROFILE%\.claude\plans\quero-levantar-um-servi-o-snappy-goblet.md`. Ele tem stack, schema, API, regras de troca, casos de teste do calendário, segurança e verificação manual. O arquivo fica fora do repositório e só existe na máquina onde o plano foi feito.
+- O plano original (13/11/2026) é a referência das decisões de base: `docs/plano-original.md`. Ele tem stack, schema, API, regras de troca, casos de teste do calendário, segurança e verificação manual. O que mudou depois está em `docs/roteiro.md`.
 - O roteiro da evolução multiusuário está em `docs/roteiro.md`. Ele define as fases 0 a 4 e, para cada uma, os E2E e o teste humano. Siga a ordem das fases e atualize o arquivo quando uma decisão mudar.
 - O remoto é `origin` = `https://github.com/milhioli/quadro-tarefas.git`, na branch `main`. Commit e push só quando o usuário pedir.
 
@@ -12,13 +12,22 @@ Quadro semanal local, em pt-BR: deck de tarefas à esquerda e quadro à direita,
 - O agente principal não roda testes, typecheck, `git diff` nem `git status`. A validação vai para o subagente `test-runner`; se o Stop hook pedir, vai também para o `e2e-validator`.
 - Nunca leia `.env`. Use o `.env.example`.
 - As versões são exatas e o `.npmrc` tem `ignore-scripts=true`. Nenhuma dependência fora da tabela do plano entra sem revisão. As únicas dependências de runtime que acessam conteúdo externo são `sax` 1.6.1 e `ical.js` 2.2.1, e ficam só no `server`.
-- `new Date()` sem argumento só pode aparecer em `server/src/clock.ts` e `web/src/lib/clock.ts`, inclusive nos testes. Para datas fixas use `new Date(2026, 10, 13, 12)` ou `fixedClock(...)`.
+- `new Date()` sem argumento só pode aparecer em `server/src/clock.ts` e `web/src/lib/clock.ts`, inclusive nos testes. Para datas fixas use `new Date(2026, 10, 13, 12)` ou `fixedClock(...)`. Menções em texto neste arquivo e em `docs/` não contam.
 - Estes termos devem ter 0 ocorrências:
   - `dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, `eval(` e `new Function`
   - `0.0.0.0`, `host: true`, `--host`, `'::'`, `allowedHosts`, `changeOrigin: true` e `@fastify/cors`
-  - Exceções aceitas: este arquivo, `web/vite.config.test.ts` (afirma que `allowedHosts` é `undefined`), `server/src/config.test.ts` e `server/src/http/guard.test.ts` (testam que `0.0.0.0` é ignorado ou rejeitado).
+  - Exceções aceitas: este arquivo, os `.md` de `docs/` (descrevem as regras), `web/vite.config.test.ts` (afirma que `allowedHosts` é `undefined`), `server/src/config.test.ts` e `server/src/http/guard.test.ts` (testam que `0.0.0.0` é ignorado ou rejeitado).
 - Todo `.ts`/`.tsx` tem um `*.test.ts(x)` irmão. As exceções são os helpers em `server/test/helpers/` e `web/src/test/`, e a pasta `e2e/`, onde os próprios arquivos já são testes.
 - Os testes da API rodam contra SQLite real em arquivo temporário, sem mock do banco. No web, testes de componente usam a API fake (`web/src/test/fakeApi.ts`) injetada via `ApiProvider`.
+
+## Ambiente do Claude Code (fora do repositório)
+- O fluxo deste arquivo pressupõe a configuração global do usuário em `~/.claude`:
+  - os agentes `test-runner`, `e2e-validator` e `cybersecurity-reviewer`;
+  - os hooks que impedem o agente principal de rodar testes e exigem a validação antes de encerrar.
+- Se algum deles não existir na máquina, **avise o usuário**. Não rode os testes no agente principal para compensar.
+- O runbook da skill `e2e-validation` ainda não cobre este projeto. O `e2e-validator` pode recusar a suíte inteira ou o `--repeat-each`. Nesse caso, peça ao usuário para rodar `npm run test:e2e`, em vez de contornar com outro agente.
+- No Windows, a ferramenta Bash (Git Bash) transforma `\\` em `\` dentro de heredoc e às vezes falha em blocos longos. Grave regex, escapes e caminhos com Write/Edit, e depois confira com Grep por `\\`.
+- Memórias locais do Claude não vão para outra máquina. O que precisa sobreviver fica neste arquivo ou em `docs/`.
 
 ## E2E (Playwright, pasta `e2e/`)
 - `npm run test:e2e` sobe o próprio `npm run dev` nas portas 3101 (API) e 5273 (Vite), com um banco novo numa pasta temporária. Ele nunca usa `dev:agenda` nem `--agenda`, e nunca toca no `server/data/quadro.sqlite`.
