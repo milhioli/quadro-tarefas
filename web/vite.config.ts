@@ -65,4 +65,7 @@ export function buildViteConfig(env: Env): UserConfig {
   };
 }
 
-export default defineConfig(({ mode }) => buildViteConfig(loadEnv(mode, REPO_ROOT, '')));
+/** Só as chaves que o Vite usa: o processo do Vite nunca carrega a senha da agenda. */
+export const VITE_ENV_KEYS = ['WEB_PORT', 'API_PORT'] as const;
+
+export default defineConfig(({ mode }) => buildViteConfig(loadEnv(mode, REPO_ROOT, [...VITE_ENV_KEYS])));

@@ -8,8 +8,13 @@ import { afterEach } from 'vitest';
 if (typeof window !== 'undefined') {
   await import('@testing-library/jest-dom/vitest');
   const { cleanup } = await import('@testing-library/react');
+  const { installMatchMedia, resetViewport } = await import('./viewport');
+  installMatchMedia();
   afterEach(() => {
     cleanup();
+    resetViewport();
+    // A visualização da agenda fica salva no storage; não pode vazar entre testes.
+    window.localStorage.clear();
   });
   installDomPolyfills();
 }

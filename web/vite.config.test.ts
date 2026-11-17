@@ -4,7 +4,13 @@ import { createServer as createNetServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { createServer, type ViteDevServer } from 'vite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { WEB_HOST, buildViteConfig, parsePort, securityHeaders } from './vite.config';
+import { VITE_ENV_KEYS, WEB_HOST, buildViteConfig, parsePort, securityHeaders } from './vite.config';
+
+describe('VITE_ENV_KEYS', () => {
+  it('o Vite só lê as portas do .env (nunca a senha da agenda)', () => {
+    expect([...VITE_ENV_KEYS]).toEqual(['WEB_PORT', 'API_PORT']);
+  });
+});
 
 describe('parsePort', () => {
   it('usa o padrão quando vazio', () => {
