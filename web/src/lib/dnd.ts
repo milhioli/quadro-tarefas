@@ -1,5 +1,15 @@
-import type { UniqueIdentifier } from '@dnd-kit/core';
-import { dayName, isValidDay, isValidSlot, planMove, slotLabel, type MoveTarget, type Position } from '@quadro/shared';
+import type { Modifier, UniqueIdentifier } from '@dnd-kit/core';
+import { getEventCoordinates } from '@dnd-kit/utilities';
+import {
+  MoveError,
+  dayName,
+  isValidDay,
+  isValidSlot,
+  planMove,
+  slotLabel,
+  type MoveTarget,
+  type Position,
+} from '@quadro/shared';
 
 /**
  * Identificadores do drag and drop. A lógica de "para onde a tarefa vai"
@@ -42,6 +52,8 @@ export interface DropIntent {
 /**
  * Converte o fim de um arraste num movimento. Devolve null quando não há
  * nada a fazer: alvo desconhecido, tarefa inexistente ou soltar no mesmo lugar.
+ * Um horário ocupado (ou que não cabe até 22:00) ainda vira movimento: quem
+ * decide é o servidor, que responde 409/400, e o App mostra o aviso.
  */
 export function dropToMove(
   state: readonly Position[],
@@ -53,10 +65,23 @@ export function dropToMove(
   if (taskId === null || to === null) return null;
   try {
     return planMove(state, taskId, to).length > 0 ? { taskId, to } : null;
-  } catch {
-    return null;
+  } catch (error) {
+    return error instanceof MoveError && error.code !== 'NOT_FOUND' ? { taskId, to } : null;
   }
 }
+
+/**
+ * Modificador do DragOverlay. O overlay nasce no canto de cima do cartão de
+ * origem; num cartão alto pego pela parte de baixo, ele ficaria muito acima
+ * do ponteiro. Aqui ele desce até o ponteiro ficar no meio dele.
+ */
+export const keepOverlayUnderPointer: Modifier = ({ activatorEvent, activeNodeRect, overlayNodeRect, transform }) => {
+  if (!activatorEvent || !activeNodeRect || !overlayNodeRect) return transform;
+  const pointer = getEventCoordinates(activatorEvent);
+  if (!pointer) return transform;
+  const shift = pointer.y - activeNodeRect.top - overlayNodeRect.height / 2;
+  return shift > 0 ? { ...transform, y: transform.y + shift } : transform;
+};
 
 /** Texto em pt-BR do alvo, para os anúncios de leitor de tela. */
 export function describeDropTarget(id: UniqueIdentifier | null | undefined): string {

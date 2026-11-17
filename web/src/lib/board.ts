@@ -1,4 +1,4 @@
-import type { Task } from '@quadro/shared';
+import { maxSpanAt, type Task } from '@quadro/shared';
 import { currentWorkWeek, formatDayHeader, holidaysForDates, isoDate, sameDate, type Holiday } from './calendar';
 
 export interface BoardColumn {
@@ -39,11 +39,27 @@ export function deckTasks(tasks: readonly Task[]): Task[] {
     .sort((a, b) => (a.deckOrder ?? 0) - (b.deckOrder ?? 0) || a.id - b.id);
 }
 
-/** Tarefas do quadro, indexadas por `cellKey(day, slot)`. */
-export function placedTasksByCell(tasks: readonly Task[]): Map<string, Task> {
-  const map = new Map<string, Task>();
+export interface BoardStart {
+  task: Task;
+  /** Até quantos slots a tarefa pode crescer sem cruzar a de baixo nem passar de 22:00. */
+  maxSpan: number;
+}
+
+export interface BoardLayout {
+  /** Célula onde cada tarefa do quadro começa (é onde o cartão é desenhado). */
+  starts: Map<string, BoardStart>;
+  /** Células cobertas pela continuação de uma tarefa de vários slots. */
+  covered: Map<string, Task>;
+}
+
+/** Onde cada tarefa do quadro começa e quais células ela cobre, por `cellKey(day, slot)`. */
+export function boardLayout(tasks: readonly Task[]): BoardLayout {
+  const starts = new Map<string, BoardStart>();
+  const covered = new Map<string, Task>();
   for (const task of tasks) {
-    if (task.day !== null && task.slot !== null) map.set(cellKey(task.day, task.slot), task);
+    if (task.day === null || task.slot === null) continue;
+    starts.set(cellKey(task.day, task.slot), { task, maxSpan: maxSpanAt(tasks, task.day, task.slot, task.id) });
+    for (let slot = task.slot + 1; slot < task.slot + task.span; slot++) covered.set(cellKey(task.day, slot), task);
   }
-  return map;
+  return { starts, covered };
 }

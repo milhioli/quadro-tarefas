@@ -1,5 +1,5 @@
-import { SLOTS, dayName, type Task } from '@quadro/shared';
-import { cellKey, type BoardColumn } from '../lib/board';
+import { SLOTS, dayName } from '@quadro/shared';
+import { cellKey, type BoardColumn, type BoardLayout } from '../lib/board';
 import { formatDayMonth } from '../lib/calendar';
 import { EMPTY_DAY_EVENTS, dayTitle, type DayEvent } from '../lib/calendarEvents';
 import { BoardCell } from './BoardCell';
@@ -8,14 +8,20 @@ import { HolidayDots } from './HolidayDots';
 
 export interface BoardProps {
   columns: readonly BoardColumn[];
-  tasksByCell: ReadonlyMap<string, Task>;
+  /** Onde cada tarefa começa e quais células ela cobre (`boardLayout`). */
+  layout: BoardLayout;
   onOpenTask: (id: number) => void;
+  /** Redimensionar pela borda de baixo do cartão. */
+  onResizeTask?: (id: number, span: number) => void;
   /** Eventos da agenda da Apple por dia (bolinha roxa no cabeçalho). */
   eventsByDay?: ReadonlyMap<number, readonly DayEvent[]>;
 }
 
-/** Quadro da semana: colunas segunda a sexta, linhas de 30 min (05:00 – 22:00). */
-export function Board({ columns, tasksByCell, onOpenTask, eventsByDay = EMPTY_DAY_EVENTS }: BoardProps) {
+/**
+ * Quadro da semana: colunas segunda a sexta, linhas de 30 min (05:00 – 22:00).
+ * Uma tarefa de vários slots é desenhada na célula de início, com a altura da faixa.
+ */
+export function Board({ columns, layout, onOpenTask, onResizeTask, eventsByDay = EMPTY_DAY_EVENTS }: BoardProps) {
   return (
     <section className="board" aria-label="Quadro da semana">
       <div className="board__scroll">
@@ -55,9 +61,11 @@ export function Board({ columns, tasksByCell, onOpenTask, eventsByDay = EMPTY_DA
                     day={column.day}
                     slot={slot}
                     label={`${dayName(column.day)} ${formatDayMonth(column.date)}, ${slotText}`}
-                    task={tasksByCell.get(cellKey(column.day, slot))}
+                    start={layout.starts.get(cellKey(column.day, slot))}
+                    covered={layout.covered.has(cellKey(column.day, slot))}
                     isToday={column.isToday}
                     onOpenTask={onOpenTask}
+                    onResizeTask={onResizeTask}
                   />
                 ))}
               </tr>

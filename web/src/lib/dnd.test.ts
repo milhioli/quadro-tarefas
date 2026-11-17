@@ -6,6 +6,7 @@ import {
   cellDropId,
   describeDropTarget,
   dropToMove,
+  keepOverlayUnderPointer,
   parseDropId,
   parseTaskDragId,
   taskDragId,
@@ -73,6 +74,40 @@ describe('dropToMove', () => {
     expect(dropToMove(state, 'task:1', 'cell:9:9')).toBeNull();
     expect(dropToMove(state, 'task:99', 'cell:1:1')).toBeNull();
     expect(dropToMove(state, 'coisa', 'cell:1:1')).toBeNull();
+  });
+
+  it('horário ocupado ou que não cabe vira movimento: o servidor recusa e o App avisa', () => {
+    const withSpans: Position[] = [
+      { id: 1, day: 0, slot: 0, deckOrder: null, span: 2 },
+      { id: 2, day: 1, slot: 0, deckOrder: null, span: 1 },
+      { id: 3, day: null, slot: null, deckOrder: 0, span: 30 },
+    ];
+    expect(dropToMove(withSpans, 'task:1', 'cell:1:0')).toEqual({ taskId: 1, to: { kind: 'cell', day: 1, slot: 0 } });
+    expect(dropToMove(withSpans, 'task:3', 'cell:2:10')).toEqual({ taskId: 3, to: { kind: 'cell', day: 2, slot: 10 } });
+  });
+});
+
+describe('keepOverlayUnderPointer', () => {
+  const rect = (top: number, height: number) => ({ top, left: 0, width: 200, height, bottom: top + height, right: 200 });
+  const args = (pointerY: number, activeTop: number, activeHeight: number, overlayHeight: number | null) =>
+    ({
+      activatorEvent: new MouseEvent('pointerdown', { clientX: 50, clientY: pointerY }),
+      activeNodeRect: rect(activeTop, activeHeight),
+      overlayNodeRect: overlayHeight === null ? null : rect(activeTop, overlayHeight),
+      transform: { x: 10, y: 20, scaleX: 1, scaleY: 1 },
+    }) as unknown as Parameters<typeof keepOverlayUnderPointer>[0];
+
+  it('cartão alto pego por baixo: desce o overlay até o ponteiro ficar no meio dele', () => {
+    // Cartão de 1000 px a partir de y=100, pego em y=900; overlay de 40 px.
+    expect(keepOverlayUnderPointer(args(900, 100, 1000, 40))).toEqual({ x: 10, y: 20 + 780, scaleX: 1, scaleY: 1 });
+  });
+
+  it('cartão de um slot (ponteiro na metade de cima do overlay) não muda', () => {
+    expect(keepOverlayUnderPointer(args(110, 100, 40, 40))).toEqual({ x: 10, y: 20, scaleX: 1, scaleY: 1 });
+  });
+
+  it('sem medidas ainda, devolve o transform como veio', () => {
+    expect(keepOverlayUnderPointer(args(900, 100, 1000, null))).toEqual({ x: 10, y: 20, scaleX: 1, scaleY: 1 });
   });
 });
 

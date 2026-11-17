@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { makeTask } from '../test/fakeApi';
 import { isoDate, parseIsoDate } from './calendar';
-import { boardColumns, cellKey, deckTasks, isOnBoard, placedTasksByCell } from './board';
+import { boardColumns, boardLayout, cellKey, deckTasks, isOnBoard } from './board';
 
 const d = (iso: string) => parseIsoDate(iso) as Date;
 
@@ -56,12 +56,30 @@ describe('deck e quadro', () => {
     expect(deckTasks(tasks).map((t) => t.id)).toEqual([3, 5, 1]);
   });
 
-  it('placedTasksByCell indexa as tarefas do quadro', () => {
-    const map = placedTasksByCell(tasks);
-    expect(map.size).toBe(2);
-    expect(map.get('0:3')?.id).toBe(2);
-    expect(map.get('4:33')?.id).toBe(4);
-    expect(map.get('1:1')).toBeUndefined();
+  it('boardLayout indexa onde cada tarefa do quadro começa', () => {
+    const { starts, covered } = boardLayout(tasks);
+    expect(starts.size).toBe(2);
+    expect(starts.get('0:3')?.task.id).toBe(2);
+    expect(starts.get('4:33')?.task.id).toBe(4);
+    expect(starts.get('1:1')).toBeUndefined();
+    expect(covered.size).toBe(0);
+  });
+
+  it('boardLayout marca as células cobertas e até onde cada tarefa pode crescer', () => {
+    const layout = boardLayout([
+      makeTask({ id: 1, day: 0, slot: 0, span: 30 }),
+      makeTask({ id: 2, day: 1, slot: 2, span: 2 }),
+      makeTask({ id: 3, day: 1, slot: 10 }),
+      makeTask({ id: 4, span: 5 }),
+    ]);
+    expect([...layout.starts.keys()].sort()).toEqual(['0:0', '1:10', '1:2']);
+    expect(layout.covered.size).toBe(29 + 1);
+    expect(layout.covered.get('0:29')?.id).toBe(1);
+    expect(layout.covered.get('0:30')).toBeUndefined();
+    expect(layout.covered.get('1:3')?.id).toBe(2);
+    expect(layout.starts.get('0:0')?.maxSpan).toBe(34);
+    expect(layout.starts.get('1:2')?.maxSpan).toBe(8);
+    expect(layout.starts.get('1:10')?.maxSpan).toBe(24);
   });
 
   it('não altera a lista recebida', () => {

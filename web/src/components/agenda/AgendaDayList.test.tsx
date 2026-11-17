@@ -20,6 +20,11 @@ describe('AgendaDayList', () => {
     ]);
   });
 
+  it('tarefa de vários slots mostra a faixa inteira', () => {
+    render(<AgendaDayList tasks={[makeTask({ id: 7, title: 'Curso', day: 3, slot: 10, span: 4 })]} day={3} onOpenTask={() => {}} />);
+    expect(screen.getByRole('button', { name: '10:00 – 12:00 Curso' })).toBeInTheDocument();
+  });
+
   it('dia vazio mostra aviso', () => {
     render(<AgendaDayList tasks={tasks} day={0} onOpenTask={() => {}} />);
     expect(screen.getByText('Nada agendado neste dia.')).toBeInTheDocument();

@@ -43,9 +43,10 @@ interface Draft {
 }
 
 function initialDraft(task: Task | undefined, initialPosition: TaskModalProps['initialPosition']): Draft {
-  let position: ScheduleValue = { day: null, slot: null };
-  if (task && task.day !== null && task.slot !== null) position = { day: task.day, slot: task.slot };
-  else if (!task && initialPosition) position = { ...initialPosition };
+  const span = task?.span ?? 1;
+  let position: ScheduleValue = { day: null, slot: null, span };
+  if (task && task.day !== null && task.slot !== null) position = { day: task.day, slot: task.slot, span };
+  else if (!task && initialPosition) position = { ...initialPosition, span };
   return {
     title: task?.title ?? '',
     color: task?.color ?? DEFAULT_COLOR,
@@ -88,7 +89,8 @@ export function TaskModal({ task, columns, tasks, initialPosition, onClose, onNo
 
   const contentChanged = JSON.stringify(content) !== initialContentJson;
   const positionChanged = position.day !== initial.position.day || position.slot !== initial.position.slot;
-  const dirty = title !== initial.title || color !== initial.color || contentChanged || positionChanged;
+  const spanChanged = position.span !== initial.position.span;
+  const dirty = title !== initial.title || color !== initial.color || contentChanged || positionChanged || spanChanged;
 
   function requestClose(): void {
     if (busy) return;
@@ -121,7 +123,14 @@ export function TaskModal({ task, columns, tasks, initialPosition, onClose, onNo
     if (!task) {
       const target = toTarget(position);
       createTask.mutate(
-        { title: parsedTitle.data, color, content, ...(target.kind === 'cell' ? { position: target } : {}) },
+        {
+          title: parsedTitle.data,
+          color,
+          content,
+          // Só manda o que difere do padrão (span 1, deck).
+          ...(position.span > 1 ? { span: position.span } : {}),
+          ...(target.kind === 'cell' ? { position: target } : {}),
+        },
         {
           onSuccess: () => {
             onNotify?.('Tarefa criada');
@@ -133,11 +142,12 @@ export function TaskModal({ task, columns, tasks, initialPosition, onClose, onNo
       return;
     }
 
-    // PATCH só com o que mudou (o horário vai na mesma requisição: tudo ou nada).
+    // PATCH só com o que mudou (horário e duração vão na mesma requisição: tudo ou nada).
     const patch: UpdateTaskInput = {};
     if (parsedTitle.data !== task.title) patch.title = parsedTitle.data;
     if (color !== initial.color) patch.color = color;
     if (contentChanged) patch.content = content;
+    if (spanChanged) patch.span = position.span;
     if (positionChanged) patch.position = toTarget(position);
     if (Object.keys(patch).length === 0) {
       onClose();

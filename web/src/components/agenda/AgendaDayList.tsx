@@ -1,4 +1,4 @@
-import { slotLabel, type Task } from '@quadro/shared';
+import { rangeLabel, type Task } from '@quadro/shared';
 import { tasksForDay } from '../../lib/agenda';
 import { AgendaTaskButton } from './AgendaTaskButton';
 
@@ -16,7 +16,7 @@ export function AgendaDayList({ tasks, day, onOpenTask }: AgendaDayListProps) {
     <ul className="agenda-list">
       {items.map((task) => (
         <li key={task.id}>
-          <AgendaTaskButton task={task} timeLabel={slotLabel(task.slot as number)} onOpen={onOpenTask} />
+          <AgendaTaskButton task={task} timeLabel={rangeLabel(task.slot as number, task.span)} onOpen={onOpenTask} />
         </li>
       ))}
     </ul>

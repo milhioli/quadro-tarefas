@@ -1,6 +1,6 @@
 import { dayName, occupantOf, type Task } from '@quadro/shared';
 import { useId } from 'react';
-import { slotChoices } from '../lib/agenda';
+import { clampSpan, endChoices, slotChoices } from '../lib/agenda';
 import type { BoardColumn } from '../lib/board';
 import { formatDayMonth, holidayKindLabel } from '../lib/calendar';
 
@@ -8,12 +8,14 @@ export interface ScheduleValue {
   /** null = sem horário (deck). */
   day: number | null;
   slot: number | null;
+  /** Duração em slots de 30 min. É da tarefa: vale também sem horário (no deck). */
+  span: number;
 }
 
 export interface SchedulePickerProps {
   columns: readonly BoardColumn[];
   tasks: readonly Task[];
-  /** Tarefa em edição: o próprio horário não conta como ocupado. */
+  /** Tarefa em edição: a própria faixa não conta como ocupada. */
   selfId?: number;
   value: ScheduleValue;
   onChange: (value: ScheduleValue) => void;
@@ -30,25 +32,39 @@ export function dayOptionLabel(column: BoardColumn): string {
 }
 
 /**
- * Dia e horário da tarefa com <select> nativos (no celular abrem o seletor do
- * sistema). Horário ocupado por outra tarefa aparece desabilitado; quem
- * garante a regra de verdade é o 409 do servidor.
+ * Dia, horário de início e fim ("Até") com <select> nativos (no celular abrem
+ * o seletor do sistema). Início ocupado aparece desabilitado; o fim vai até a
+ * próxima tarefa ou 22:00. Quem garante a regra de verdade é o 409 do servidor.
  */
 export function SchedulePicker({ columns, tasks, selfId, value, onChange, error }: SchedulePickerProps) {
   const dayId = useId();
   const slotId = useId();
+  const endId = useId();
   const errorId = useId();
   const choices = value.day === null ? [] : slotChoices(tasks, value.day, selfId);
+  const ends = value.day === null || value.slot === null ? [] : endChoices(tasks, value.day, value.slot, selfId);
 
   function changeDay(raw: string): void {
     if (raw === '') {
-      onChange({ day: null, slot: null });
+      onChange({ day: null, slot: null, span: value.span });
       return;
     }
     const day = Number(raw);
-    // Mantém o horário escolhido se ele também estiver livre no novo dia.
-    const keep = value.slot !== null && !occupantOf(tasks, day, value.slot, selfId);
-    onChange({ day, slot: keep ? value.slot : null });
+    // Mantém o início escolhido se ele também estiver livre no novo dia; o fim encolhe se precisar.
+    if (value.slot !== null && !occupantOf(tasks, day, value.slot, selfId)) {
+      onChange({ day, slot: value.slot, span: clampSpan(tasks, day, value.slot, value.span, selfId) });
+    } else {
+      onChange({ day, slot: null, span: value.span });
+    }
+  }
+
+  function changeSlot(raw: string): void {
+    if (raw === '' || value.day === null) {
+      onChange({ day: value.day, slot: null, span: value.span });
+      return;
+    }
+    const slot = Number(raw);
+    onChange({ day: value.day, slot, span: clampSpan(tasks, value.day, slot, value.span, selfId) });
   }
 
   return (
@@ -84,14 +100,31 @@ export function SchedulePicker({ columns, tasks, selfId, value, onChange, error 
             disabled={value.day === null}
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? errorId : undefined}
-            onChange={(event) =>
-              onChange({ day: value.day, slot: event.target.value === '' ? null : Number(event.target.value) })
-            }
+            onChange={(event) => changeSlot(event.target.value)}
           >
             <option value="">{value.day === null ? '—' : 'Escolha um horário'}</option>
             {choices.map((choice) => (
               <option key={choice.slot} value={choice.slot} disabled={choice.occupant !== undefined}>
                 {choice.occupant ? `${choice.label} · ocupado (${choice.occupant.title})` : choice.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor={endId} className="field__sublabel">
+            Até
+          </label>
+          <select
+            id={endId}
+            className="input"
+            value={ends.length === 0 ? '' : String(value.span)}
+            disabled={ends.length === 0}
+            onChange={(event) => onChange({ ...value, span: Number(event.target.value) })}
+          >
+            {ends.length === 0 ? <option value="">—</option> : null}
+            {ends.map((end) => (
+              <option key={end.span} value={end.span}>
+                {end.label}
               </option>
             ))}
           </select>

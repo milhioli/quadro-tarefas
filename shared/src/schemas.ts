@@ -28,14 +28,23 @@ export const moveTargetSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 
+/** Duração em slots de 30 min: de 1 até o dia inteiro do quadro (05:00 – 22:00). */
+export const spanSchema = z
+  .number({ error: 'Duração inválida' })
+  .int({ error: 'Duração inválida' })
+  .min(1, { error: 'A duração mínima é de 30 minutos' })
+  .max(SLOT_COUNT, { error: 'A duração máxima vai de 05:00 a 22:00' });
+
 /**
  * `position` em criação/edição: ao contrário do arraste (PUT position, que
- * troca), aqui uma célula ocupada por outra tarefa é recusada com 409.
+ * troca), aqui uma faixa que cruza outra tarefa é recusada com 409. O mesmo
+ * vale para `span` que cresce sobre a tarefa de baixo.
  */
 export const createTaskSchema = z.strictObject({
   title: titleSchema,
   color: colorSchema.optional(),
   content: richDocSchema.optional(),
+  span: spanSchema.optional(),
   position: moveTargetSchema.optional(),
 });
 
@@ -44,6 +53,7 @@ export const updateTaskSchema = z
     title: titleSchema.optional(),
     color: colorSchema.optional(),
     content: richDocSchema.optional(),
+    span: spanSchema.optional(),
     position: moveTargetSchema.optional(),
   })
   .refine((value) => Object.keys(value).length > 0, { error: 'Nada para atualizar' });
@@ -69,8 +79,10 @@ export interface Task {
   content: RichDoc;
   /** 0 = segunda … 4 = sexta; null quando a tarefa está no deck. */
   day: number | null;
-  /** 0 = 05:00 – 05:30 … 33 = 21:30 – 22:00; null quando está no deck. */
+  /** Primeiro slot: 0 = 05:00 – 05:30 … 33 = 21:30 – 22:00; null quando está no deck. */
   slot: number | null;
+  /** Quantos slots seguidos a tarefa ocupa (1 a 34). Vale também no deck. */
+  span: number;
   /** Ordem no deck; null quando a tarefa está no quadro. */
   deckOrder: number | null;
   createdAt: string;

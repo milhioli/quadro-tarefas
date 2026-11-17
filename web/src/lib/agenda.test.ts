@@ -4,7 +4,9 @@ import {
   AGENDA_VIEWS,
   AGENDA_VIEW_STORAGE_KEY,
   browserStorage,
+  clampSpan,
   defaultAgendaDay,
+  endChoices,
   loadAgendaView,
   parseAgendaView,
   saveAgendaView,
@@ -138,5 +140,44 @@ describe('slotChoices', () => {
 
   it('outro dia está livre', () => {
     expect(slotChoices(tasks, 3).every((c) => c.occupant === undefined)).toBe(true);
+  });
+
+  it('um horário coberto pela faixa de outra tarefa aparece ocupado', () => {
+    const long = [makeTask({ id: 9, title: 'Plantão', day: 1, slot: 0, span: 30 })];
+    const choices = slotChoices(long, 1);
+    expect(choices[29]?.occupant?.title).toBe('Plantão');
+    expect(choices[30]?.occupant).toBeUndefined();
+    expect(slotChoices(long, 1, 9).every((c) => c.occupant === undefined)).toBe(true);
+  });
+});
+
+describe('endChoices e clampSpan ("Até")', () => {
+  const tasks = [makeTask({ id: 1, day: 0, slot: 4, span: 2 }), makeTask({ id: 2, day: 0, slot: 10 })];
+
+  it('vai do fim do próprio slot até a próxima tarefa, com a duração', () => {
+    const choices = endChoices(tasks, 0, 6);
+    expect(choices.map((c) => c.span)).toEqual([1, 2, 3, 4]);
+    expect(choices[0]?.label).toBe('08:30 (30 min)');
+    expect(choices.at(-1)?.label).toBe('10:00 (2 h)');
+  });
+
+  it('sem tarefa abaixo vai até 22:00; a própria tarefa não limita', () => {
+    expect(endChoices(tasks, 1, 30).map((c) => c.label)).toEqual([
+      '20:30 (30 min)',
+      '21:00 (1 h)',
+      '21:30 (1 h 30)',
+      '22:00 (2 h)',
+    ]);
+    expect(endChoices(tasks, 0, 4, 1)).toHaveLength(6);
+  });
+
+  it('horário ocupado não tem fim possível', () => {
+    expect(endChoices(tasks, 0, 5)).toEqual([]);
+  });
+
+  it('clampSpan reduz ao que cabe e nunca fica abaixo de 1', () => {
+    expect(clampSpan(tasks, 0, 6, 10)).toBe(4);
+    expect(clampSpan(tasks, 0, 6, 2)).toBe(2);
+    expect(clampSpan(tasks, 0, 5, 3)).toBe(1);
   });
 });

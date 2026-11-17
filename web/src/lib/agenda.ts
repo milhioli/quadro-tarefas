@@ -1,4 +1,4 @@
-import { SLOTS, occupantOf, type Task } from '@quadro/shared';
+import { SLOTS, maxSpanAt, occupantOf, slotTime, spanDurationLabel, type Task } from '@quadro/shared';
 import type { BoardColumn } from './board';
 
 /** As três visualizações da agenda mobile, na ordem das tags. */
@@ -65,7 +65,33 @@ export interface SlotChoice {
   occupant: Task | undefined;
 }
 
-/** Os 34 horários do dia para o seletor do modal, com quem ocupa cada um. */
+/**
+ * Os 34 horários do dia para o seletor do modal, com quem ocupa cada um
+ * (inclusive um horário só coberto pela faixa de outra tarefa).
+ */
 export function slotChoices(tasks: readonly Task[], day: number, selfId?: number): SlotChoice[] {
   return SLOTS.map((label, slot) => ({ slot, label, occupant: occupantOf(tasks, day, slot, selfId) }));
+}
+
+export interface EndChoice {
+  span: number;
+  /** "06:30 (1 h 30)". */
+  label: string;
+}
+
+/**
+ * Fins possíveis ("Até") para uma tarefa que começa em `slot`: do fim do
+ * próprio slot até o início da próxima tarefa do dia, ou até 22:00.
+ */
+export function endChoices(tasks: readonly Task[], day: number, slot: number, selfId?: number): EndChoice[] {
+  const max = maxSpanAt(tasks, day, slot, selfId);
+  return Array.from({ length: max }, (_, index) => {
+    const span = index + 1;
+    return { span, label: `${slotTime(slot + span)} (${spanDurationLabel(span)})` };
+  });
+}
+
+/** O maior span que cabe a partir de (day, slot), no mínimo 1. */
+export function clampSpan(tasks: readonly Task[], day: number, slot: number, span: number, selfId?: number): number {
+  return Math.max(1, Math.min(span, maxSpanAt(tasks, day, slot, selfId)));
 }

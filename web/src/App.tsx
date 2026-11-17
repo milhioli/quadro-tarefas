@@ -15,7 +15,7 @@ import {
 import type { Task } from '@quadro/shared';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { describeError } from './api/client';
-import { useCalendarEvents, useMoveTask, useResetBoard, useTasks } from './api/queries';
+import { useCalendarEvents, useMoveTask, useResetBoard, useResizeTask, useTasks } from './api/queries';
 import { Board } from './components/Board';
 import { CalendarHeader } from './components/CalendarHeader';
 import { ConfirmDialog } from './components/ConfirmDialog';
@@ -23,11 +23,17 @@ import { Deck } from './components/Deck';
 import { TaskCardView } from './components/TaskCard';
 import { TaskModal } from './components/TaskModal';
 import { MobileAgenda } from './components/agenda/MobileAgenda';
-import { boardColumns, deckTasks, placedTasksByCell } from './lib/board';
+import { boardColumns, boardLayout, deckTasks } from './lib/board';
 import { isoDate } from './lib/calendar';
 import { EMPTY_DAY_EVENTS, eventsByDay } from './lib/calendarEvents';
 import type { Clock } from './lib/clock';
-import { POINTER_ACTIVATION, describeDropTarget, dropToMove, parseTaskDragId } from './lib/dnd';
+import {
+  POINTER_ACTIVATION,
+  describeDropTarget,
+  dropToMove,
+  keepOverlayUnderPointer,
+  parseTaskDragId,
+} from './lib/dnd';
 import { useMediaQuery, MOBILE_QUERY } from './lib/useMediaQuery';
 import { useToday } from './lib/useToday';
 
@@ -79,6 +85,7 @@ export function App({ clock }: AppProps) {
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const tasksQuery = useTasks();
   const moveTask = useMoveTask();
+  const resizeTask = useResizeTask();
   const resetBoard = useResetBoard();
 
   // A edição guarda uma cópia da tarefa: o modal não desmonta no meio da exclusão.
@@ -105,7 +112,7 @@ export function App({ clock }: AppProps) {
     ? describeError(calendarQuery.error, 'Agenda da Apple indisponível')
     : null;
   const deck = useMemo(() => deckTasks(tasks ?? []), [tasks]);
-  const byCell = useMemo(() => placedTasksByCell(tasks ?? []), [tasks]);
+  const layout = useMemo(() => boardLayout(tasks ?? []), [tasks]);
   const activeTask = activeTaskId === null ? undefined : tasks?.find((task) => task.id === activeTaskId);
 
   const notify = useCallback((tone: Notice['tone'], text: string) => {
@@ -141,6 +148,13 @@ export function App({ clock }: AppProps) {
     moveTask.mutate(intent, {
       onError: (error) => notify('error', describeError(error, 'Não foi possível mover a tarefa')),
     });
+  }
+
+  function handleResize(id: number, span: number): void {
+    resizeTask.mutate(
+      { id, span },
+      { onError: (error) => notify('error', describeError(error, 'Não foi possível mudar a duração')) },
+    );
   }
 
   function handleReset(): void {
@@ -191,8 +205,16 @@ export function App({ clock }: AppProps) {
         accessibility={{ announcements, screenReaderInstructions }}
       >
         <Deck tasks={deck} onOpenTask={openTask} />
-        <Board columns={columns} tasksByCell={byCell} onOpenTask={openTask} eventsByDay={calendarEvents} />
-        <DragOverlay dropAnimation={null}>{activeTask ? <TaskCardView task={activeTask} overlay /> : null}</DragOverlay>
+        <Board
+          columns={columns}
+          layout={layout}
+          onOpenTask={openTask}
+          onResizeTask={handleResize}
+          eventsByDay={calendarEvents}
+        />
+        <DragOverlay dropAnimation={null} modifiers={[keepOverlayUnderPointer]}>
+          {activeTask ? <TaskCardView task={activeTask} overlay /> : null}
+        </DragOverlay>
       </DndContext>
     );
   }
@@ -212,7 +234,7 @@ export function App({ clock }: AppProps) {
             type="button"
             className="button"
             onClick={() => setConfirmReset(true)}
-            disabled={byCell.size === 0 || resetBoard.isPending}
+            disabled={layout.starts.size === 0 || resetBoard.isPending}
           >
             Resetar quadro
           </button>

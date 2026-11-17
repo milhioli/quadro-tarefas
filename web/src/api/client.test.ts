@@ -10,6 +10,7 @@ const task: Task = {
   content: emptyDoc(),
   day: null,
   slot: null,
+  span: 1,
   deckOrder: 0,
   createdAt: '2026-11-13T12:00:00.000Z',
   updatedAt: '2026-11-13T12:00:00.000Z',

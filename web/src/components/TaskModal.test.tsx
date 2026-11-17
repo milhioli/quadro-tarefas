@@ -52,6 +52,7 @@ function setup(task?: Task, options: SetupOptions = {}) {
 const titleInput = () => screen.getByRole('textbox', { name: 'Título' });
 const daySelect = () => screen.getByRole('combobox', { name: 'Dia' });
 const slotSelect = () => screen.getByRole('combobox', { name: 'Horário' });
+const endSelect = () => screen.getByRole('combobox', { name: 'Até' });
 const createArgs = (api: ReturnType<typeof createFakeApi>) =>
   api.calls.filter((c) => c.method === 'createTask').map((c) => c.args[0]);
 
@@ -99,6 +100,21 @@ describe('TaskModal — criação', () => {
     expect(slotSelect()).toHaveAccessibleDescription('Escolha um horário');
     expect(api.calls).toHaveLength(0);
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('cria com duração: das 05:00 às 20:00 manda span 30', async () => {
+    const { api, user, onClose } = setup();
+    await user.type(titleInput(), 'Plantão');
+    await user.selectOptions(daySelect(), 'Segunda, 09/11');
+    await user.selectOptions(slotSelect(), '05:00 – 05:30');
+    await user.selectOptions(endSelect(), '20:00 (15 h)');
+    await user.click(screen.getByRole('button', { name: 'Salvar' }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(createArgs(api)).toEqual([
+      { title: 'Plantão', color: 'amarelo', content: emptyDoc(), span: 30, position: { kind: 'cell', day: 0, slot: 0 } },
+    ]);
+    expect(api.tasks[0]).toMatchObject({ day: 0, slot: 0, span: 30 });
   });
 
   it('horário ocupado aparece desabilitado', async () => {
@@ -200,6 +216,51 @@ describe('TaskModal — edição', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(api.calls.find((c) => c.method === 'updateTask')?.args).toEqual([4, { position: { kind: 'deck' } }]);
     expect(api.tasks[0]).toMatchObject({ day: null, slot: null });
+  });
+
+  it('mudar só o "Até" manda só {span}', async () => {
+    const { api, user, onClose } = setup(task);
+    expect(endSelect()).toHaveValue('1');
+    await user.selectOptions(endSelect(), '07:30 (1 h 30)');
+    await user.click(screen.getByRole('button', { name: 'Salvar' }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(api.calls.find((c) => c.method === 'updateTask')?.args).toEqual([4, { span: 3 }]);
+    expect(api.tasks[0]).toMatchObject({ day: 1, slot: 2, span: 3 });
+  });
+
+  it('abre com a duração da tarefa e mudar início e fim vai no mesmo PATCH', async () => {
+    const long = makeTask({ id: 6, title: 'Plantão', day: 0, slot: 0, span: 30 });
+    const { api, user, onClose } = setup(long);
+    expect(endSelect()).toHaveValue('30');
+    await user.selectOptions(slotSelect(), '06:00 – 06:30');
+    await user.selectOptions(endSelect(), '08:00 (2 h)');
+    await user.click(screen.getByRole('button', { name: 'Salvar' }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(api.calls.find((c) => c.method === 'updateTask')?.args).toEqual([
+      6,
+      { span: 4, position: { kind: 'cell', day: 0, slot: 2 } },
+    ]);
+  });
+
+  it('duração que cruza a tarefa de baixo (409) avisa e nada muda', async () => {
+    const below = makeTask({ id: 9, title: 'Depois', day: 1, slot: 4 });
+    const { api, user, onClose } = setup(task, { apiTasks: [task, below], knownTasks: [task] });
+    await user.selectOptions(endSelect(), '08:00 (2 h)');
+    await user.click(screen.getByRole('button', { name: 'Salvar' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Esse horário já está ocupado');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(api.tasks.find((t) => t.id === 4)).toMatchObject({ span: 1 });
+  });
+
+  it('mudar só o "Até" também conta como alteração pendente', async () => {
+    const { user, onClose } = setup(task);
+    await user.selectOptions(endSelect(), '07:00 (1 h)');
+    await user.click(screen.getByRole('button', { name: 'Cancelar' }));
+    expect(screen.getByRole('alertdialog', { name: 'Descartar alterações não salvas?' })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('horário que ficou ocupado (409) não muda nenhum campo', async () => {

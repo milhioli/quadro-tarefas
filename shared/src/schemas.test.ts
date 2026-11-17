@@ -7,6 +7,7 @@ import {
   createTaskSchema,
   isMondayIsoDate,
   moveBodySchema,
+  spanSchema,
   taskIdParamsSchema,
   updateTaskSchema,
 } from './schemas';
@@ -82,6 +83,26 @@ describe('position em criação e edição', () => {
   ])('rejeita position %j', (position) => {
     expect(createTaskSchema.safeParse({ title: 'a', position }).success).toBe(false);
     expect(updateTaskSchema.safeParse({ position }).success).toBe(false);
+  });
+});
+
+describe('span (duração) em criação e edição', () => {
+  it('aceita de 1 a 34 slots, e span sozinho é uma edição válida', () => {
+    expect(createTaskSchema.parse({ title: 'a', span: 1 })).toEqual({ title: 'a', span: 1 });
+    expect(createTaskSchema.parse({ title: 'a', span: 34, position: { kind: 'cell', day: 0, slot: 0 } }).span).toBe(34);
+    expect(updateTaskSchema.parse({ span: 2 })).toEqual({ span: 2 });
+    expect(spanSchema.parse(30)).toBe(30);
+  });
+
+  it.each([0, 35, -1, 1.5, '2', null, Number.NaN])('rejeita span %j', (span) => {
+    expect(createTaskSchema.safeParse({ title: 'a', span }).success).toBe(false);
+    expect(updateTaskSchema.safeParse({ span }).success).toBe(false);
+  });
+
+  it('mensagens em pt-BR', () => {
+    expect(spanSchema.safeParse(0).error?.issues[0]?.message).toBe('A duração mínima é de 30 minutos');
+    expect(spanSchema.safeParse(35).error?.issues[0]?.message).toBe('A duração máxima vai de 05:00 a 22:00');
+    expect(spanSchema.safeParse(1.5).error?.issues[0]?.message).toBe('Duração inválida');
   });
 });
 

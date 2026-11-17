@@ -24,6 +24,7 @@ interface TaskRow {
   content: string;
   day: number | null;
   slot: number | null;
+  span: number;
   deck_order: number | null;
   created_at: string;
   updated_at: string;
@@ -33,6 +34,7 @@ interface PositionRow {
   id: number;
   day: number | null;
   slot: number | null;
+  span: number;
   deck_order: number | null;
 }
 
@@ -53,6 +55,7 @@ function toTask(row: TaskRow): Task {
     content: parseContent(row.content),
     day: row.day,
     slot: row.slot,
+    span: row.span,
     deckOrder: row.deck_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -62,12 +65,18 @@ function toTask(row: TaskRow): Task {
 export interface TaskRepository {
   list(): Task[];
   get(id: number): Task | null;
-  /** Com `position` em célula ocupada lança MoveError('OCCUPIED') e nada é gravado. */
+  /**
+   * Com `position` numa faixa que cruza outra tarefa lança MoveError('OCCUPIED');
+   * se não couber até 22:00, MoveError('INVALID_TARGET'). Em ambos, nada é gravado.
+   */
   create(input: CreateTaskInput): Task;
-  /** Idem: `position` em célula ocupada lança MoveError('OCCUPIED') e nenhum campo muda. */
+  /**
+   * Idem para `position` e para `span` (inclusive um span que cresce no lugar
+   * sobre a tarefa de baixo). Em erro, nenhum campo muda.
+   */
   update(id: number, patch: UpdateTaskInput): Task | null;
   remove(id: number): boolean;
-  /** Move a tarefa; lança MoveError('NOT_FOUND') se o id não existir. */
+  /** Move a tarefa (o arraste, que troca); lança MoveError('NOT_FOUND') se o id não existir. */
   move(id: number, to: MoveTarget): Task[];
   reset(): { tasks: Task[]; moved: number };
 }
@@ -79,15 +88,15 @@ export function createTaskRepository(db: DatabaseSync, now: Now): TaskRepository
        ORDER BY (day IS NOT NULL), deck_order, day, slot, id`,
     ),
     get: db.prepare('SELECT * FROM tasks WHERE id = ?'),
-    positions: db.prepare('SELECT id, day, slot, deck_order FROM tasks'),
+    positions: db.prepare('SELECT id, day, slot, span, deck_order FROM tasks'),
     nextDeckOrder: db.prepare(
       'SELECT COALESCE(MAX(deck_order), -1) + 1 AS next FROM tasks WHERE deck_order IS NOT NULL',
     ),
     insert: db.prepare(
-      `INSERT INTO tasks (title, color, content, day, slot, deck_order, created_at, updated_at)
-       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?)`,
+      `INSERT INTO tasks (title, color, content, span, day, slot, deck_order, created_at, updated_at)
+       VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
     ),
-    update: db.prepare('UPDATE tasks SET title = ?, color = ?, content = ?, updated_at = ? WHERE id = ?'),
+    update: db.prepare('UPDATE tasks SET title = ?, color = ?, content = ?, span = ?, updated_at = ? WHERE id = ?'),
     remove: db.prepare('DELETE FROM tasks WHERE id = ?'),
     setPosition: db.prepare('UPDATE tasks SET day = ?, slot = ?, deck_order = ?, updated_at = ? WHERE id = ?'),
   };
@@ -97,19 +106,24 @@ export function createTaskRepository(db: DatabaseSync, now: Now): TaskRepository
       id: row.id,
       day: row.day,
       slot: row.slot,
+      span: row.span,
       deckOrder: row.deck_order,
     }));
   }
 
   /**
-   * Grava as mudanças em duas fases para nunca violar o índice único de célula:
+   * Grava as mudanças em duas fases para nunca violar o índice único de célula
+   * nem os triggers de sobreposição:
    * 1) toda tarefa que muda vai provisoriamente ao deck (deck_order = -id);
-   * 2) cada uma recebe a posição final.
+   * 2) `between`, se houver (ex.: gravar o span novo enquanto a tarefa está fora do quadro);
+   * 3) cada uma recebe a posição final.
+   * Em qualquer momento o quadro é um subconjunto do estado final, que não se sobrepõe.
    */
-  function writePositions(changes: readonly Position[], timestamp: string): void {
+  function writePositions(changes: readonly Position[], timestamp: string, between?: () => void): void {
     for (const change of changes) {
       statements.setPosition.run(null, null, -change.id, timestamp, change.id);
     }
+    between?.();
     for (const change of changes) {
       statements.setPosition.run(change.day, change.slot, change.deckOrder, timestamp, change.id);
     }
@@ -132,16 +146,18 @@ export function createTaskRepository(db: DatabaseSync, now: Now): TaskRepository
       return withTransaction(db, () => {
         const timestamp = nowIso(now);
         const { next } = statements.nextDeckOrder.get() as { next: number };
+        // Nasce no deck (onde qualquer span é válido) e só depois vai para a célula.
         const result = statements.insert.run(
           input.title,
           input.color ?? DEFAULT_COLOR,
           JSON.stringify(input.content ?? emptyDoc()),
+          input.span ?? 1,
           next,
           timestamp,
           timestamp,
         );
         const id = Number(result.lastInsertRowid);
-        // Na mesma transação: se a célula estiver ocupada, o INSERT é desfeito.
+        // Na mesma transação: se a faixa estiver ocupada, o INSERT é desfeito.
         if (input.position) writePositions(planPlacement(readPositions(), id, input.position), timestamp);
         return get(id) as Task;
       });
@@ -152,15 +168,28 @@ export function createTaskRepository(db: DatabaseSync, now: Now): TaskRepository
         const current = get(id);
         if (!current) return null;
         const timestamp = nowIso(now);
-        statements.update.run(
-          patch.title ?? current.title,
-          patch.color ?? current.color,
-          JSON.stringify(patch.content ?? current.content),
-          timestamp,
-          id,
-        );
-        // Na mesma transação: se a célula estiver ocupada, nenhum campo muda.
-        if (patch.position) writePositions(planPlacement(readPositions(), id, patch.position), timestamp);
+        const span = patch.span ?? current.span;
+
+        // Valida tudo em memória, já com o span novo, antes de gravar qualquer coisa.
+        // Span que muda sem `position` é checado na própria célula (redimensionar).
+        const positions = readPositions().map((p) => (p.id === id ? { ...p, span } : p));
+        const keepCell =
+          patch.span !== undefined && current.day !== null && current.slot !== null
+            ? ({ kind: 'cell', day: current.day, slot: current.slot } as const)
+            : undefined;
+        const target = patch.position ?? keepCell;
+        const changes = target ? planPlacement(positions, id, target) : [];
+
+        writePositions(changes, timestamp, () => {
+          statements.update.run(
+            patch.title ?? current.title,
+            patch.color ?? current.color,
+            JSON.stringify(patch.content ?? current.content),
+            span,
+            timestamp,
+            id,
+          );
+        });
         return get(id);
       });
     },

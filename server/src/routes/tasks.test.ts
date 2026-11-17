@@ -171,6 +171,71 @@ describe('position em POST e PATCH', () => {
   });
 });
 
+describe('span (duração) em POST, PATCH e PUT position', () => {
+  it('POST com span 30 a partir das 05:00 cria a faixa 05:00 – 20:00', async () => {
+    const res = await t.request('POST', '/api/tasks', { title: 'Plantão', span: 30, position: { kind: 'cell', day: 0, slot: 0 } });
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toMatchObject({ title: 'Plantão', span: 30, day: 0, slot: 0 });
+    expect(((await t.request('GET', '/api/tasks')).json() as { tasks: Task[] }).tasks[0]?.span).toBe(30);
+  });
+
+  it('toda tarefa responde com span, 1 por padrão', async () => {
+    expect((await create('A')).span).toBe(1);
+  });
+
+  it.each([0, 35, 1.5, '2', null])('span inválido %j dá 400 em POST e PATCH', async (span) => {
+    const post = await t.request('POST', '/api/tasks', { title: 'x', span });
+    expect(post.statusCode).toBe(400);
+    expect(post.json()).toMatchObject({ error: { code: 'VALIDATION' } });
+    const a = await create('A');
+    expect((await t.request('PATCH', `/api/tasks/${a.id}`, { span })).statusCode).toBe(400);
+  });
+
+  it('PATCH só com span cresce no lugar; sobre a tarefa de baixo dá 409 e nada muda', async () => {
+    const a = await create('A', { position: { kind: 'cell', day: 1, slot: 0 } });
+    await create('B', { position: { kind: 'cell', day: 1, slot: 2 } });
+    let res = await t.request('PATCH', `/api/tasks/${a.id}`, { span: 2 });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ span: 2, day: 1, slot: 0 });
+
+    res = await t.request('PATCH', `/api/tasks/${a.id}`, { title: 'A2', span: 3 });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({ error: { code: 'CONFLICT', message: 'Esse horário já está ocupado' } });
+    expect((await t.request('GET', `/api/tasks/${a.id}`)).json()).toMatchObject({ title: 'A', span: 2 });
+  });
+
+  it('faixa que passa de 22:00 dá 400 com mensagem em pt-BR', async () => {
+    const a = await create('A', { position: { kind: 'cell', day: 0, slot: 32 } });
+    const res = await t.request('PATCH', `/api/tasks/${a.id}`, { span: 3 });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: { code: 'VALIDATION', message: 'A tarefa não cabe até 22:00' } });
+    const post = await t.request('POST', '/api/tasks', { title: 'B', span: 5, position: { kind: 'cell', day: 0, slot: 30 } });
+    expect(post.statusCode).toBe(400);
+  });
+
+  it('tarefas adjacentes não conflitam', async () => {
+    await create('A', { span: 2, position: { kind: 'cell', day: 3, slot: 0 } });
+    const res = await t.request('POST', '/api/tasks', { title: 'B', position: { kind: 'cell', day: 3, slot: 2 } });
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('PUT position troca blocos do mesmo tamanho e dá 409 com tamanho diferente', async () => {
+    const a = await create('A', { span: 2, position: { kind: 'cell', day: 0, slot: 0 } });
+    const b = await create('B', { span: 2, position: { kind: 'cell', day: 2, slot: 6 } });
+    await create('C', { position: { kind: 'cell', day: 4, slot: 0 } });
+
+    let res = await t.request('PUT', `/api/tasks/${a.id}/position`, { to: { kind: 'cell', day: 2, slot: 7 } });
+    expect(res.statusCode).toBe(200);
+    const tasks = (res.json() as { tasks: Task[] }).tasks;
+    expect(tasks.find((x) => x.id === a.id)).toMatchObject({ day: 2, slot: 6, span: 2 });
+    expect(tasks.find((x) => x.id === b.id)).toMatchObject({ day: 0, slot: 0, span: 2 });
+
+    res = await t.request('PUT', `/api/tasks/${a.id}/position`, { to: { kind: 'cell', day: 4, slot: 0 } });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: { code: 'CONFLICT' } });
+  });
+});
+
 describe('PUT /api/tasks/:id/position', () => {
   const move = (id: number, to: unknown) => t.request('PUT', `/api/tasks/${id}/position`, { to });
   const where = (tasks: Task[]) =>

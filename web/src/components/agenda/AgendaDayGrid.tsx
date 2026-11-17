@@ -1,5 +1,5 @@
-import { SLOTS, dayName, type Task } from '@quadro/shared';
-import { cellKey, placedTasksByCell, type BoardColumn } from '../../lib/board';
+import { SLOTS, dayName, rangeLabel, type Task } from '@quadro/shared';
+import { boardLayout, cellKey, type BoardColumn } from '../../lib/board';
 import { formatDayMonth } from '../../lib/calendar';
 import { AgendaTaskButton } from './AgendaTaskButton';
 
@@ -11,17 +11,23 @@ export interface AgendaDayGridProps {
   onCreateAt: (position: { day: number; slot: number }) => void;
 }
 
-/** Visualização "Dia completo": as 34 faixas; as livres criam tarefa naquele horário. */
+/**
+ * Visualização "Dia completo": as 34 faixas; as livres criam tarefa naquele
+ * horário. Uma tarefa de vários slots vira uma linha só ("05:00 – 20:00"),
+ * e as faixas que ela cobre não aparecem.
+ */
 export function AgendaDayGrid({ tasks, column, onOpenTask, onCreateAt }: AgendaDayGridProps) {
-  const byCell = placedTasksByCell(tasks);
+  const { starts, covered } = boardLayout(tasks);
   return (
     <ol className="agenda-grid">
       {SLOTS.map((label, slot) => {
-        const task = byCell.get(cellKey(column.day, slot));
+        const key = cellKey(column.day, slot);
+        if (covered.has(key)) return null;
+        const task = starts.get(key)?.task;
         return (
           <li key={slot} className={task ? 'agenda-grid__row is-filled' : 'agenda-grid__row'}>
             {task ? (
-              <AgendaTaskButton task={task} timeLabel={label} onOpen={onOpenTask} />
+              <AgendaTaskButton task={task} timeLabel={rangeLabel(slot, task.span)} onOpen={onOpenTask} />
             ) : (
               <button
                 type="button"

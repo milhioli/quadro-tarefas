@@ -42,4 +42,13 @@ describe('AgendaDayGrid', () => {
     expect(screen.queryByRole('button', { name: /Quarta/ })).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /^Agendar em/ })).toHaveLength(34);
   });
+
+  it('tarefa de vários slots vira uma linha só, e as faixas cobertas somem', () => {
+    renderGrid([makeTask({ id: 5, title: 'Plantão', day: 1, slot: 0, span: 30 })]);
+    expect(screen.getByRole('button', { name: '05:00 – 20:00 Plantão' })).toBeInTheDocument();
+    expect(screen.getAllByRole('listitem')).toHaveLength(1 + 4);
+    expect(screen.getAllByRole('button', { name: /^Agendar em/ })).toHaveLength(4);
+    expect(screen.queryByRole('button', { name: 'Agendar em Terça 17/11, 19:30 – 20:00' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Agendar em Terça 17/11, 20:00 – 20:30' })).toBeInTheDocument();
+  });
 });

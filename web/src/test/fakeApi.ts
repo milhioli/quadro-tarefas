@@ -28,6 +28,7 @@ export function makeTask(overrides: Partial<Task> & { id: number }): Task {
     content: emptyDoc(),
     day: null,
     slot: null,
+    span: 1,
     deckOrder: placed ? null : overrides.id,
     createdAt: T0,
     updatedAt: T0,
@@ -142,6 +143,7 @@ export function createFakeApi(initial: readonly Task[] = []): FakeApi {
         content: input.content ?? emptyDoc(),
         day: null,
         slot: null,
+        span: input.span ?? 1,
         deckOrder: nextDeckOrder(tasks),
         createdAt: T0,
         updatedAt: T0,
@@ -159,11 +161,17 @@ export function createFakeApi(initial: readonly Task[] = []): FakeApi {
         title: patch.title ?? current.title,
         color: patch.color ?? current.color,
         content: patch.content ?? current.content,
+        span: patch.span ?? current.span,
       };
+      // Como o repositório: span que muda sem `position` é validado na própria célula.
+      const keepCell =
+        patch.span !== undefined && current.day !== null && current.slot !== null
+          ? ({ kind: 'cell', day: current.day, slot: current.slot } as const)
+          : undefined;
       tasks = place(
         tasks.map((t) => (t.id === id ? updated : t)),
         id,
-        patch.position,
+        patch.position ?? keepCell,
       );
       return copy(find(id));
     },

@@ -379,6 +379,42 @@ button:focus-visible,
   cursor: grabbing;
 }
 
+/* Borda de baixo do cartão no quadro: puxar muda a duração (de 30 em 30 min). */
+.task-card__resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 8px;
+  border-radius: 0 0 6px 6px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.task-card__resize::after {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  width: 24px;
+  height: 3px;
+  margin-left: -12px;
+  border-radius: 2px;
+  background: currentColor;
+  content: '';
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.task-card-handle:hover .task-card__resize::after,
+.task-card-handle.is-resizing .task-card__resize::after {
+  opacity: 0.35;
+}
+
+.task-card-handle.is-resizing {
+  box-shadow: 0 0 0 2px var(--primary);
+  cursor: ns-resize;
+}
+
 /* ---------- Quadro ---------- */
 
 .board {
@@ -397,6 +433,8 @@ button:focus-visible,
 }
 
 .board__table {
+  /* Altura de cada linha de 30 min. O cartão de uma tarefa com duração mede span × isto. */
+  --board-row-h: 46px;
   width: 100%;
   min-width: 760px;
   table-layout: fixed;
@@ -527,7 +565,8 @@ button.holiday-dot:focus-visible {
 .board__slot {
   position: sticky;
   left: 0;
-  z-index: 1;
+  /* Acima dos cartões (z-index 1), que passam por baixo ao rolar para o lado. */
+  z-index: 2;
   padding: 0 8px;
   background: var(--surface);
   color: var(--muted);
@@ -538,9 +577,37 @@ button.holiday-dot:focus-visible {
 }
 
 .board-cell {
-  height: 40px;
+  position: relative;
+  box-sizing: border-box;
+  /* Altura exata (com borda): o cartão absoluto ocupa span × --board-row-h. */
+  height: var(--board-row-h);
   padding: 3px;
   vertical-align: middle;
+}
+
+/* O cartão fica só na célula de início e desce sobre as cobertas; fora do fluxo, não estica a linha. */
+.board-cell > .task-card-handle {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  left: 3px;
+  z-index: 1;
+  display: flex;
+  height: calc(var(--span, 1) * var(--board-row-h) - 6px);
+}
+
+.board-cell > .task-card-handle > .task-card {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.task-card-handle--tall > .task-card {
+  align-items: flex-start;
+}
+
+.task-card-handle--tall .task-card__title {
+  white-space: normal;
 }
 
 .board-cell.is-today {
@@ -730,7 +797,8 @@ button.calendar-dot:focus-visible {
 
 .schedule-picker__row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* Dia, Horário (início) e Até (fim). */
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
 }
 

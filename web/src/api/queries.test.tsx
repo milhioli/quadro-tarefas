@@ -13,6 +13,7 @@ import {
   useDeleteTask,
   useMoveTask,
   useResetBoard,
+  useResizeTask,
   useTasks,
   useUpdateTask,
 } from './queries';
@@ -169,6 +170,41 @@ describe('useMoveTask', () => {
     await act(() => result.current.move.mutateAsync({ taskId: 1, to: { kind: 'cell', day: 3, slot: 10 } }));
     expect(cache()?.find((t) => t.id === 1)).toMatchObject({ day: 3, slot: 10 });
     expect(cache()?.find((t) => t.id === 2)).toMatchObject({ day: 0, slot: 0 });
+  });
+});
+
+describe('useResizeTask', () => {
+  it('muda o span no cache na hora, manda só {span} e grava a resposta', async () => {
+    const { api, wrapper, cache } = setup([makeTask({ id: 1, day: 0, slot: 0 }), makeTask({ id: 2, day: 0, slot: 5 })]);
+    const { result } = renderHook(() => ({ tasks: useTasks(), resize: useResizeTask() }), { wrapper });
+    await waitFor(() => expect(result.current.tasks.isSuccess).toBe(true));
+
+    const hold = api.holdNext('updateTask');
+    act(() => {
+      result.current.resize.mutate({ id: 1, span: 4 });
+    });
+    await waitFor(() => expect(cache()?.find((t) => t.id === 1)?.span).toBe(4));
+    expect(api.tasks.find((t) => t.id === 1)?.span).toBe(1);
+
+    hold.release();
+    await waitFor(() => expect(result.current.resize.isSuccess).toBe(true));
+    expect(api.calls.filter((c) => c.method === 'updateTask').map((c) => c.args)).toEqual([[1, { span: 4 }]]);
+    expect(cache()).toEqual(api.tasks);
+  });
+
+  it('crescer sobre a tarefa de baixo (409) volta o tamanho e recarrega', async () => {
+    const { wrapper, cache } = setup([makeTask({ id: 1, day: 0, slot: 0 }), makeTask({ id: 2, day: 0, slot: 2 })]);
+    const { result } = renderHook(() => ({ tasks: useTasks(), resize: useResizeTask() }), { wrapper });
+    await waitFor(() => expect(result.current.tasks.isSuccess).toBe(true));
+
+    let caught: unknown;
+    await act(async () => {
+      caught = await result.current.resize.mutateAsync({ id: 1, span: 3 }).catch((error: unknown) => error);
+    });
+    expect(caught).toBeInstanceOf(ApiError);
+    expect(caught).toMatchObject({ status: 409, code: 'CONFLICT' });
+    await waitFor(() => expect(result.current.resize.isError).toBe(true));
+    await waitFor(() => expect(cache()?.find((t) => t.id === 1)?.span).toBe(1));
   });
 });
 

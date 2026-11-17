@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { boardColumns, placedTasksByCell } from '../lib/board';
+import { boardColumns, boardLayout } from '../lib/board';
 import { parseIsoDate } from '../lib/calendar';
 import { eventsByDay } from '../lib/calendarEvents';
 import { TestDndContext } from '../test/dnd';
@@ -14,7 +14,7 @@ function renderBoard(todayIso: string, tasks = [makeTask({ id: 1, title: 'Reuni�
   const onOpenTask = vi.fn();
   render(
     <TestDndContext>
-      <Board columns={boardColumns(d(todayIso))} tasksByCell={placedTasksByCell(tasks)} onOpenTask={onOpenTask} />
+      <Board columns={boardColumns(d(todayIso))} layout={boardLayout(tasks)} onOpenTask={onOpenTask} />
     </TestDndContext>,
   );
   return { onOpenTask };
@@ -71,7 +71,7 @@ describe('Board', () => {
     const events = eventsByDay([{ id: 'e1', title: 'Dentista', start, end, allDay: false }], columns);
     render(
       <TestDndContext>
-        <Board columns={columns} tasksByCell={new Map()} onOpenTask={() => {}} eventsByDay={events} />
+        <Board columns={columns} layout={boardLayout([])} onOpenTask={() => {}} eventsByDay={events} />
       </TestDndContext>,
     );
     const friday = screen.getByRole('columnheader', { name: /Sex 13\/11/ });
@@ -81,6 +81,35 @@ describe('Board', () => {
 
     await userEvent.setup().click(dot);
     expect(screen.getByRole('dialog', { name: 'Agenda · Sexta, 13/11' })).toHaveTextContent('Dentista09:00 – 10:00');
+  });
+
+  it('tarefa de vários slots é desenhada só na célula de início e cobre as de baixo', () => {
+    renderBoard('2026-11-13', [makeTask({ id: 7, title: 'Plantão', day: 0, slot: 0, span: 30 })]);
+    const start = screen.getByRole('cell', { name: 'Segunda 09/11, 05:00 – 05:30' });
+    const card = within(start).getByRole('button', { name: /Plantão/ });
+    expect(card.style.getPropertyValue('--span')).toBe('30');
+    expect(screen.getAllByRole('button', { name: /Plantão/ })).toHaveLength(1);
+    const covered = screen.getByRole('cell', { name: 'Segunda 09/11, 19:30 – 20:00' });
+    expect(covered).toHaveClass('is-covered');
+    expect(covered).toBeEmptyDOMElement();
+    expect(screen.getByRole('cell', { name: 'Segunda 09/11, 20:00 – 20:30' })).not.toHaveClass('is-covered');
+    // Todas as 170 células continuam lá (e aceitando soltar).
+    expect(screen.getAllByRole('cell')).toHaveLength(34 * 5);
+  });
+
+  it('com onResizeTask os cartões do quadro ganham a borda', () => {
+    render(
+      <TestDndContext>
+        <Board
+          columns={boardColumns(d('2026-11-13'))}
+          layout={boardLayout([makeTask({ id: 1, title: 'Reunião', day: 2, slot: 2 })])}
+          onOpenTask={() => {}}
+          onResizeTask={() => {}}
+        />
+      </TestDndContext>,
+    );
+    const card = screen.getByRole('button', { name: /Reunião/ });
+    expect(card.querySelector('.task-card__resize')).not.toBeNull();
   });
 
   it('dia sem feriado não tem bolinha', () => {

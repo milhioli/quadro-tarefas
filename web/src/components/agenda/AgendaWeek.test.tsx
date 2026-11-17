@@ -28,6 +28,12 @@ describe('AgendaWeek', () => {
     expect(screen.getAllByRole('region')).toHaveLength(5);
   });
 
+  it('tarefa de vários slots mostra a faixa inteira', () => {
+    render(<AgendaWeek tasks={[makeTask({ id: 8, title: 'Plantão', day: 2, slot: 0, span: 30 })]} columns={columns} onOpenTask={() => {}} />);
+    const wednesday = screen.getByRole('region', { name: 'Qua 18/11' });
+    expect(within(wednesday).getByRole('button', { name: '05:00 – 20:00 Plantão' })).toBeInTheDocument();
+  });
+
   it('feriado aparece como bolinha que abre o modal', async () => {
     render(<AgendaWeek tasks={[]} columns={columns} onOpenTask={() => {}} />);
     const friday = screen.getByRole('region', { name: 'Sex 20/11' });

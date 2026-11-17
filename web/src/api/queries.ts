@@ -116,6 +116,37 @@ export function useMoveTask() {
   });
 }
 
+export interface ResizeVariables {
+  id: number;
+  span: number;
+}
+
+/**
+ * Redimensionar pela borda: o cartão fica no tamanho novo na hora, o PATCH
+ * `{span}` vai ao servidor e, se ele recusar (409 com a tarefa de baixo ou
+ * 400 além de 22:00), o tamanho volta e a lista é recarregada.
+ */
+export function useResizeTask() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation<Task, ApiError, ResizeVariables, MoveSnapshot>({
+    mutationFn: ({ id, span }) => api.updateTask(id, { span }),
+    onMutate: async ({ id, span }) => {
+      await queryClient.cancelQueries({ queryKey: TASKS_KEY });
+      const previous = queryClient.getQueryData<Task[]>(TASKS_KEY);
+      queryClient.setQueryData<Task[]>(TASKS_KEY, (old) => old?.map((t) => (t.id === id ? { ...t, span } : t)));
+      return { previous };
+    },
+    onError: (_error, _variables, snapshot) => {
+      if (snapshot?.previous) queryClient.setQueryData<Task[]>(TASKS_KEY, snapshot.previous);
+      void queryClient.invalidateQueries({ queryKey: TASKS_KEY });
+    },
+    onSuccess: (task) => {
+      queryClient.setQueryData<Task[]>(TASKS_KEY, (old) => old?.map((t) => (t.id === task.id ? task : t)));
+    },
+  });
+}
+
 export const CALENDAR_STALE_MS = 5 * 60_000;
 export const calendarKey = (mondayIso: string) => ['calendar', mondayIso] as const;
 
