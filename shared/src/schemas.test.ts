@@ -3,7 +3,9 @@ import {
   CLIENT_HEADER,
   CLIENT_HEADER_VALUE,
   TITLE_MAX_LENGTH,
+  calendarWeekQuerySchema,
   createTaskSchema,
+  isMondayIsoDate,
   moveBodySchema,
   taskIdParamsSchema,
   updateTaskSchema,
@@ -48,6 +50,41 @@ describe('updateTaskSchema', () => {
   });
 });
 
+describe('position em criação e edição', () => {
+  it('aceita deck e células válidas', () => {
+    expect(createTaskSchema.parse({ title: 'a', position: { kind: 'cell', day: 1, slot: 2 } }).position).toEqual({
+      kind: 'cell',
+      day: 1,
+      slot: 2,
+    });
+    expect(createTaskSchema.parse({ title: 'a', position: { kind: 'deck' } }).position).toEqual({ kind: 'deck' });
+    expect(updateTaskSchema.parse({ position: { kind: 'deck' } })).toEqual({ position: { kind: 'deck' } });
+    expect(updateTaskSchema.parse({ title: 'b', position: { kind: 'cell', day: 4, slot: 33 } })).toEqual({
+      title: 'b',
+      position: { kind: 'cell', day: 4, slot: 33 },
+    });
+  });
+
+  it('position é opcional', () => {
+    expect(createTaskSchema.parse({ title: 'a' })).toEqual({ title: 'a' });
+  });
+
+  it.each([
+    { kind: 'cell', day: 5, slot: 0 },
+    { kind: 'cell', day: 0, slot: 34 },
+    { kind: 'cell', day: 0.5, slot: 0 },
+    { kind: 'cell', day: 1 },
+    { kind: 'cell', day: 1, slot: 2, extra: 1 },
+    { kind: 'deck', day: 0 },
+    { kind: 'x' },
+    null,
+    'deck',
+  ])('rejeita position %j', (position) => {
+    expect(createTaskSchema.safeParse({ title: 'a', position }).success).toBe(false);
+    expect(updateTaskSchema.safeParse({ position }).success).toBe(false);
+  });
+});
+
 describe('moveBodySchema', () => {
   it('aceita deck e células válidas', () => {
     expect(moveBodySchema.parse({ to: { kind: 'deck' } })).toEqual({ to: { kind: 'deck' } });
@@ -77,6 +114,25 @@ describe('taskIdParamsSchema', () => {
 
   it.each(['0', '-1', '01', '1e3', '0x10', '1.5', 'abc', '', '9999999999999999'])('rejeita "%s"', (id) => {
     expect(taskIdParamsSchema.safeParse({ id }).success).toBe(false);
+  });
+});
+
+describe('semana da agenda', () => {
+  it('isMondayIsoDate aceita só segundas válidas', () => {
+    expect(isMondayIsoDate('2026-11-16')).toBe(true);
+    expect(isMondayIsoDate('2026-11-17')).toBe(false);
+    expect(isMondayIsoDate('2026-02-30')).toBe(false);
+    expect(isMondayIsoDate('2026-11-16T00:00')).toBe(false);
+    expect(isMondayIsoDate('16/11/2026')).toBe(false);
+    expect(isMondayIsoDate('')).toBe(false);
+  });
+
+  it('calendarWeekQuerySchema é estrito', () => {
+    expect(calendarWeekQuerySchema.parse({ week: '2026-11-16' })).toEqual({ week: '2026-11-16' });
+    expect(calendarWeekQuerySchema.safeParse({ week: '2026-11-18' }).success).toBe(false);
+    expect(calendarWeekQuerySchema.safeParse({ week: '2026-11-16', extra: '1' }).success).toBe(false);
+    expect(calendarWeekQuerySchema.safeParse({ week: ['2026-11-16', '2026-11-23'] }).success).toBe(false);
+    expect(calendarWeekQuerySchema.safeParse({}).success).toBe(false);
   });
 });
 

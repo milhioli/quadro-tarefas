@@ -89,6 +89,56 @@ describe('taskRepository', () => {
     expect(temp.db.isTransaction).toBe(false);
   });
 
+  it('cria já agendada quando recebe position livre', () => {
+    repo.create({ title: 'A' });
+    const b = repo.create({ title: 'B', position: { kind: 'cell', day: 2, slot: 4 } });
+    expect(b).toMatchObject({ day: 2, slot: 4, deckOrder: null });
+    expect(positions()).toEqual({ A: 'deck:0', B: '2:4' });
+    expect(repo.create({ title: 'C', position: { kind: 'deck' } }).deckOrder).toBe(1);
+  });
+
+  it('criar em célula ocupada lança OCCUPIED e não cria nada', () => {
+    repo.create({ title: 'A', position: { kind: 'cell', day: 0, slot: 0 } });
+    try {
+      repo.create({ title: 'B', position: { kind: 'cell', day: 0, slot: 0 } });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(MoveError);
+      expect((error as MoveError).code).toBe('OCCUPIED');
+    }
+    expect(repo.list().map((t) => t.title)).toEqual(['A']);
+    expect(temp.db.isTransaction).toBe(false);
+  });
+
+  it('editar com position move a tarefa na mesma operação', () => {
+    const a = repo.create({ title: 'A' });
+    const moved = repo.update(a.id, { title: 'A2', position: { kind: 'cell', day: 4, slot: 33 } });
+    expect(moved).toMatchObject({ title: 'A2', day: 4, slot: 33, deckOrder: null });
+    // Sozinha no quadro, ela volta para a primeira posição do deck.
+    const back = repo.update(a.id, { position: { kind: 'deck' } });
+    expect(back).toMatchObject({ day: null, slot: null, deckOrder: 0 });
+  });
+
+  it('editar para célula ocupada lança OCCUPIED e nenhum campo muda', () => {
+    const a = repo.create({ title: 'A', position: { kind: 'cell', day: 1, slot: 1 } });
+    const b = repo.create({ title: 'B' });
+    expect(() => repo.update(b.id, { title: 'B2', color: 'rosa', position: { kind: 'cell', day: 1, slot: 1 } })).toThrow(
+      MoveError,
+    );
+    expect(repo.get(b.id)).toMatchObject({ title: 'B', color: 'amarelo', day: null, deckOrder: b.deckOrder });
+    expect(repo.get(a.id)).toMatchObject({ day: 1, slot: 1 });
+    expect(temp.db.isTransaction).toBe(false);
+  });
+
+  it('editar mantendo a própria célula não é conflito', () => {
+    const a = repo.create({ title: 'A', position: { kind: 'cell', day: 3, slot: 3 } });
+    expect(repo.update(a.id, { title: 'A2', position: { kind: 'cell', day: 3, slot: 3 } })).toMatchObject({
+      title: 'A2',
+      day: 3,
+      slot: 3,
+    });
+  });
+
   it('reset devolve tudo ao deck em ordem de dia e horário', () => {
     const a = repo.create({ title: 'A' });
     const b = repo.create({ title: 'B' });

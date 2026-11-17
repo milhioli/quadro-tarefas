@@ -14,7 +14,7 @@ export interface Position {
   deckOrder: number | null;
 }
 
-export type MoveErrorCode = 'NOT_FOUND' | 'INVALID_TARGET';
+export type MoveErrorCode = 'NOT_FOUND' | 'INVALID_TARGET' | 'OCCUPIED';
 
 export class MoveError extends Error {
   readonly code: MoveErrorCode;
@@ -75,6 +75,28 @@ export function planMove(state: readonly Position[], taskId: number, to: MoveTar
     }
   }
   return changes;
+}
+
+/** Tarefa que ocupa a célula, ignorando `exceptId` (a própria tarefa). */
+export function occupantOf<T extends Position>(
+  state: readonly T[],
+  day: number,
+  slot: number,
+  exceptId?: number,
+): T | undefined {
+  return state.find((p) => p.id !== exceptId && p.day === day && p.slot === slot);
+}
+
+/**
+ * Como `planMove`, mas para agendar pelo formulário: uma célula ocupada por
+ * outra tarefa é recusada (MoveError 'OCCUPIED') em vez de trocar.
+ */
+export function planPlacement(state: readonly Position[], taskId: number, to: MoveTarget): Position[] {
+  if (!state.some((p) => p.id === taskId)) throw new MoveError('NOT_FOUND', 'Tarefa não encontrada');
+  if (to.kind === 'cell' && isValidDay(to.day) && isValidSlot(to.slot) && occupantOf(state, to.day, to.slot, taskId)) {
+    throw new MoveError('OCCUPIED', 'Esse horário já está ocupado');
+  }
+  return planMove(state, taskId, to);
 }
 
 /** Devolve todas as tarefas do quadro ao fim do deck, na ordem (dia, horário). */

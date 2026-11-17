@@ -18,20 +18,7 @@ export const richDocSchema = z.custom<RichDoc>((value) => validateRichDoc(value)
   error: 'Conteúdo da tarefa inválido',
 });
 
-export const createTaskSchema = z.strictObject({
-  title: titleSchema,
-  color: colorSchema.optional(),
-  content: richDocSchema.optional(),
-});
-
-export const updateTaskSchema = z
-  .strictObject({
-    title: titleSchema.optional(),
-    color: colorSchema.optional(),
-    content: richDocSchema.optional(),
-  })
-  .refine((value) => Object.keys(value).length > 0, { error: 'Nada para atualizar' });
-
+/** Destino de uma tarefa: o deck ou uma célula (dia 0–4, horário 0–33). */
 export const moveTargetSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('deck') }),
   z.strictObject({
@@ -40,6 +27,26 @@ export const moveTargetSchema = z.discriminatedUnion('kind', [
     slot: z.number().int().min(0).max(SLOT_COUNT - 1),
   }),
 ]);
+
+/**
+ * `position` em criação/edição: ao contrário do arraste (PUT position, que
+ * troca), aqui uma célula ocupada por outra tarefa é recusada com 409.
+ */
+export const createTaskSchema = z.strictObject({
+  title: titleSchema,
+  color: colorSchema.optional(),
+  content: richDocSchema.optional(),
+  position: moveTargetSchema.optional(),
+});
+
+export const updateTaskSchema = z
+  .strictObject({
+    title: titleSchema.optional(),
+    color: colorSchema.optional(),
+    content: richDocSchema.optional(),
+    position: moveTargetSchema.optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, { error: 'Nada para atualizar' });
 
 export const moveBodySchema = z.strictObject({ to: moveTargetSchema });
 
@@ -79,9 +86,53 @@ export interface ResetResponse {
   moved: number;
 }
 
+// ---------- Agenda da Apple (somente leitura) ----------
+
+/**
+ * Evento da agenda, já minimizado pelo servidor: só título e horário.
+ * Com hora: `start`/`end` são instantes ISO (UTC). Dia inteiro: `AAAA-MM-DD`,
+ * com `end` exclusivo (como o DTEND do iCalendar).
+ */
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+}
+
+export interface CalendarWeekResponse {
+  /** false quando a integração não foi ligada (sem --agenda ou sem senha de app). */
+  enabled: boolean;
+  events: CalendarEvent[];
+}
+
+/** AAAA-MM-DD que existe no calendário e cai numa segunda-feira. */
+export function isMondayIsoDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day &&
+    date.getUTCDay() === 1
+  );
+}
+
+export const calendarWeekQuerySchema = z.strictObject({
+  week: z
+    .string({ error: 'Informe a semana' })
+    .refine(isMondayIsoDate, { error: 'A semana deve ser uma segunda-feira no formato AAAA-MM-DD' }),
+});
+
 export type ApiErrorCode =
   | 'VALIDATION'
   | 'NOT_FOUND'
+  | 'CONFLICT'
+  | 'UPSTREAM'
+  | 'UPSTREAM_AUTH'
   | 'FORBIDDEN'
   | 'PAYLOAD_TOO_LARGE'
   | 'UNSUPPORTED_MEDIA_TYPE'

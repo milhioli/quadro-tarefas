@@ -5,6 +5,7 @@ import {
   isRichDoc,
   isTaskColor,
   planMove,
+  planPlacement,
   planReset,
   type CreateTaskInput,
   type MoveTarget,
@@ -61,7 +62,9 @@ function toTask(row: TaskRow): Task {
 export interface TaskRepository {
   list(): Task[];
   get(id: number): Task | null;
+  /** Com `position` em célula ocupada lança MoveError('OCCUPIED') e nada é gravado. */
   create(input: CreateTaskInput): Task;
+  /** Idem: `position` em célula ocupada lança MoveError('OCCUPIED') e nenhum campo muda. */
   update(id: number, patch: UpdateTaskInput): Task | null;
   remove(id: number): boolean;
   /** Move a tarefa; lança MoveError('NOT_FOUND') se o id não existir. */
@@ -137,7 +140,10 @@ export function createTaskRepository(db: DatabaseSync, now: Now): TaskRepository
           timestamp,
           timestamp,
         );
-        return get(Number(result.lastInsertRowid)) as Task;
+        const id = Number(result.lastInsertRowid);
+        // Na mesma transação: se a célula estiver ocupada, o INSERT é desfeito.
+        if (input.position) writePositions(planPlacement(readPositions(), id, input.position), timestamp);
+        return get(id) as Task;
       });
     },
 
@@ -145,13 +151,16 @@ export function createTaskRepository(db: DatabaseSync, now: Now): TaskRepository
       return withTransaction(db, () => {
         const current = get(id);
         if (!current) return null;
+        const timestamp = nowIso(now);
         statements.update.run(
           patch.title ?? current.title,
           patch.color ?? current.color,
           JSON.stringify(patch.content ?? current.content),
-          nowIso(now),
+          timestamp,
           id,
         );
+        // Na mesma transação: se a célula estiver ocupada, nenhum campo muda.
+        if (patch.position) writePositions(planPlacement(readPositions(), id, patch.position), timestamp);
         return get(id);
       });
     },

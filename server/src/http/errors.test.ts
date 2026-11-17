@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
-import { HttpError, errorBody, forbidden, notFound, registerErrorHandling, toErrorResponse } from './errors';
+import { HttpError, conflict, errorBody, forbidden, notFound, registerErrorHandling, toErrorResponse } from './errors';
 
 describe('toErrorResponse', () => {
   it('usa status, código e mensagem do HttpError', () => {
@@ -31,9 +31,14 @@ describe('toErrorResponse', () => {
     expect(toErrorResponse(null).status).toBe(500);
   });
 
-  it('helpers prontos para 403 e 404', () => {
+  it('helpers prontos para 403, 404 e 409', () => {
     expect(forbidden().statusCode).toBe(403);
     expect(notFound().message).toBe('Tarefa não encontrada');
+    expect(toErrorResponse(conflict())).toEqual({
+      status: 409,
+      body: { error: { code: 'CONFLICT', message: 'Esse horário já está ocupado' } },
+      unexpected: false,
+    });
     expect(errorBody('NOT_FOUND', 'x', [])).toEqual({ error: { code: 'NOT_FOUND', message: 'x' } });
   });
 });

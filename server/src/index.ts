@@ -3,6 +3,10 @@ import { normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance, FastifyServerOptions } from 'fastify';
 import { buildApp } from './app';
+import { createCaldavClient } from './calendar/caldavClient';
+import { createCalendarService } from './calendar/calendarService';
+import { loadCalendarConfig, type CalendarOffReason, type MutableEnv } from './calendar/config';
+import { createGuardedFetch } from './calendar/guardedFetch';
 import { API_HOST, guardOptionsFor, loadConfig, type Env } from './config';
 import { openDatabase } from './db/connection';
 import { migrate } from './db/migrations';
@@ -16,14 +20,24 @@ export interface MainOptions {
   /** Carrega o .env da raiz, se existir. Desligado nos testes. */
   loadDotEnv?: boolean;
   logger?: FastifyServerOptions['logger'];
+  /** Linha de comando (padrão: process.argv). A agenda só liga com --agenda. */
+  argv?: readonly string[];
 }
+
+const CALENDAR_OFF_MESSAGES: Partial<Record<CalendarOffReason, string>> = {
+  'no-credentials': 'Agenda da Apple: --agenda sem ICLOUD_APPLE_ID/ICLOUD_APP_PASSWORD; seguindo sem agenda',
+  'tls-disabled': 'Agenda da Apple desligada: verificação de TLS desativada no ambiente (NODE_TLS_REJECT_UNAUTHORIZED=0)',
+};
 
 export async function main(options: MainOptions = {}): Promise<FastifyInstance> {
   if (options.loadDotEnv ?? true) {
     const envFile = resolve(REPO_ROOT, '.env');
     if (existsSync(envFile)) process.loadEnvFile(envFile);
   }
-  const config = loadConfig(options.env ?? process.env, { dbPath: DEFAULT_DB_PATH });
+  const env = options.env ?? process.env;
+  const config = loadConfig(env, { dbPath: DEFAULT_DB_PATH });
+  // Lê e apaga a credencial do ambiente; só liga com --agenda na linha de comando.
+  const calendarConfig = loadCalendarConfig(env as MutableEnv, options.argv ?? process.argv);
   const db = openDatabase(config.dbPath);
   migrate(db);
 
@@ -31,7 +45,24 @@ export async function main(options: MainOptions = {}): Promise<FastifyInstance> 
     db,
     logger: options.logger ?? { level: 'info' },
     guard: guardOptionsFor(config),
+    calendar:
+      calendarConfig.status === 'on'
+        ? (log) =>
+            createCalendarService({
+              log,
+              createSource: () =>
+                createCaldavClient(createGuardedFetch({ authorization: calendarConfig.authorization }), {
+                  calendarNames: calendarConfig.calendarNames,
+                }),
+            })
+        : undefined,
   });
+  if (calendarConfig.status === 'on') {
+    app.log.info('Agenda da Apple: ligada (somente leitura)');
+  } else {
+    const message = CALENDAR_OFF_MESSAGES[calendarConfig.reason];
+    if (message) app.log.warn(message);
+  }
   app.addHook('onClose', async () => {
     if (db.isOpen) db.close();
   });

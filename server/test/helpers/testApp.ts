@@ -1,5 +1,5 @@
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from 'fastify';
-import { buildApp } from '../../src/app';
+import { buildApp, type BuildAppOptions } from '../../src/app';
 import { fixedNow, type Now } from '../../src/clock';
 import { createTempDb, type TempDb } from './tempDb';
 
@@ -19,9 +19,11 @@ export interface TestApp {
   close(): Promise<void>;
 }
 
-export async function createTestApp(options: { now?: Now; temp?: TempDb } = {}): Promise<TestApp> {
+export async function createTestApp(
+  options: { now?: Now; temp?: TempDb; calendar?: BuildAppOptions['calendar'] } = {},
+): Promise<TestApp> {
   const temp = options.temp ?? createTempDb();
-  const app = buildApp({ db: temp.db, now: options.now ?? fixedNow(T0) });
+  const app = buildApp({ db: temp.db, now: options.now ?? fixedNow(T0), calendar: options.calendar });
   await app.ready();
 
   return {

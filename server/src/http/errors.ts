@@ -19,6 +19,8 @@ export class HttpError extends Error {
 
 export const notFound = (message = 'Tarefa não encontrada'): HttpError => new HttpError(404, 'NOT_FOUND', message);
 export const forbidden = (): HttpError => new HttpError(403, 'FORBIDDEN', 'Acesso negado');
+export const conflict = (message = 'Esse horário já está ocupado'): HttpError =>
+  new HttpError(409, 'CONFLICT', message);
 
 export function errorBody(code: ApiErrorCode, message: string, issues?: Issue[]): ApiErrorBody {
   return issues && issues.length > 0 ? { error: { code, message, issues } } : { error: { code, message } };

@@ -106,6 +106,71 @@ describe('rotas de tarefas', () => {
   });
 });
 
+describe('position em POST e PATCH', () => {
+  const list = async () => ((await t.request('GET', '/api/tasks')).json() as { tasks: Task[] }).tasks;
+
+  it('POST com célula livre cria já agendada', async () => {
+    const res = await t.request('POST', '/api/tasks', { title: 'Academia', position: { kind: 'cell', day: 1, slot: 4 } });
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toMatchObject({ title: 'Academia', day: 1, slot: 4, deckOrder: null });
+  });
+
+  it('POST em célula ocupada dá 409 e não cria a tarefa', async () => {
+    await create('A', { position: { kind: 'cell', day: 0, slot: 0 } });
+    const res = await t.request('POST', '/api/tasks', { title: 'B', position: { kind: 'cell', day: 0, slot: 0 } });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({ error: { code: 'CONFLICT', message: 'Esse horário já está ocupado' } });
+    expect((await list()).map((x) => x.title)).toEqual(['A']);
+  });
+
+  it('PATCH move para célula livre e para o deck', async () => {
+    const a = await create('A');
+    let res = await t.request('PATCH', `/api/tasks/${a.id}`, { position: { kind: 'cell', day: 2, slot: 2 } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ day: 2, slot: 2, deckOrder: null });
+
+    res = await t.request('PATCH', `/api/tasks/${a.id}`, { position: { kind: 'deck' } });
+    expect(res.json()).toMatchObject({ day: null, slot: null });
+  });
+
+  it('PATCH com título e célula ocupada dá 409 e o título não muda', async () => {
+    await create('A', { position: { kind: 'cell', day: 3, slot: 3 } });
+    const b = await create('B');
+    const res = await t.request('PATCH', `/api/tasks/${b.id}`, { title: 'B2', position: { kind: 'cell', day: 3, slot: 3 } });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: { code: 'CONFLICT' } });
+    expect((await t.request('GET', `/api/tasks/${b.id}`)).json()).toMatchObject({ title: 'B', day: null });
+  });
+
+  it('PATCH com position em tarefa inexistente dá 404', async () => {
+    const res = await t.request('PATCH', '/api/tasks/999', { position: { kind: 'deck' } });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it.each([
+    { kind: 'cell', day: 5, slot: 0 },
+    { kind: 'cell', day: 0, slot: 1, extra: true },
+    { kind: 'deck', slot: 1 },
+    'deck',
+  ])('position inválida %j dá 400 em POST e PATCH', async (position) => {
+    const post = await t.request('POST', '/api/tasks', { title: 'x', position });
+    expect(post.statusCode).toBe(400);
+    const a = await create('A');
+    const patch = await t.request('PATCH', `/api/tasks/${a.id}`, { position });
+    expect(patch.statusCode).toBe(400);
+  });
+
+  it('o arraste (PUT position) continua trocando em vez de recusar', async () => {
+    const a = await create('A', { position: { kind: 'cell', day: 0, slot: 0 } });
+    const b = await create('B', { position: { kind: 'cell', day: 1, slot: 1 } });
+    const res = await t.request('PUT', `/api/tasks/${a.id}/position`, { to: { kind: 'cell', day: 1, slot: 1 } });
+    expect(res.statusCode).toBe(200);
+    const tasks = (res.json() as { tasks: Task[] }).tasks;
+    expect(tasks.find((x) => x.id === a.id)).toMatchObject({ day: 1, slot: 1 });
+    expect(tasks.find((x) => x.id === b.id)).toMatchObject({ day: 0, slot: 0 });
+  });
+});
+
 describe('PUT /api/tasks/:id/position', () => {
   const move = (id: number, to: unknown) => t.request('PUT', `/api/tasks/${id}/position`, { to });
   const where = (tasks: Task[]) =>

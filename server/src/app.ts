@@ -1,11 +1,18 @@
 import type { DatabaseSync } from 'node:sqlite';
-import Fastify, { type FastifyInstance, type FastifyServerOptions, type RouteOptions } from 'fastify';
+import Fastify, {
+  type FastifyBaseLogger,
+  type FastifyInstance,
+  type FastifyServerOptions,
+  type RouteOptions,
+} from 'fastify';
+import { disabledCalendarService, type CalendarService } from './calendar/calendarService';
 import { systemNow, type Now } from './clock';
 import { DEFAULT_GUARD_OPTIONS, type GuardOptions } from './config';
 import { registerErrorHandling } from './http/errors';
 import { registerGuard } from './http/guard';
 import { createTaskRepository } from './repositories/taskRepository';
 import { registerBoardRoutes } from './routes/board';
+import { registerCalendarRoutes } from './routes/calendar';
 import { registerHealthRoutes } from './routes/health';
 import { registerTaskRoutes } from './routes/tasks';
 
@@ -26,6 +33,8 @@ export interface BuildAppOptions {
   guard?: GuardOptions;
   /** Observa cada rota registrada (usado para auditar o guard em teste). */
   onRoute?: (route: RouteOptions) => void;
+  /** Agenda da Apple. Ausente = desligada. Recebe o logger do app. */
+  calendar?: (log: FastifyBaseLogger) => CalendarService;
 }
 
 /** Headers de segurança em toda resposta (inclusive erros e 403 do guard). */
@@ -55,10 +64,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   registerGuard(app, options.guard ?? DEFAULT_GUARD_OPTIONS);
   registerErrorHandling(app);
 
-  const repo = createTaskRepository(options.db, options.now ?? systemNow);
+  const now = options.now ?? systemNow;
+  const repo = createTaskRepository(options.db, now);
   registerHealthRoutes(app);
   registerTaskRoutes(app, repo);
   registerBoardRoutes(app, repo);
+  registerCalendarRoutes(app, options.calendar ? options.calendar(app.log) : disabledCalendarService, now);
 
   return app;
 }

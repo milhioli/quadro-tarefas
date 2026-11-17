@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { MoveError, applyPositions, isPlaced, nextDeckOrder, planMove, planReset, type Position } from './move';
+import {
+  MoveError,
+  applyPositions,
+  isPlaced,
+  nextDeckOrder,
+  occupantOf,
+  planMove,
+  planPlacement,
+  planReset,
+  type Position,
+} from './move';
 
 const deck = (id: number, deckOrder: number): Position => ({ id, day: null, slot: null, deckOrder });
 const cell = (id: number, day: number, slot: number): Position => ({ id, day, slot, deckOrder: null });
@@ -64,6 +74,60 @@ describe('planMove', () => {
     const keys = next.filter(isPlaced).map((p) => `${p.day}:${p.slot}`);
     expect(new Set(keys).size).toBe(keys.length);
     expect(next).toHaveLength(3);
+  });
+});
+
+describe('occupantOf', () => {
+  const state = [deck(1, 0), cell(2, 0, 3), cell(3, 4, 33)];
+
+  it('acha quem está na célula', () => {
+    expect(occupantOf(state, 0, 3)?.id).toBe(2);
+    expect(occupantOf(state, 4, 33)?.id).toBe(3);
+    expect(occupantOf(state, 1, 1)).toBeUndefined();
+  });
+
+  it('ignora a própria tarefa', () => {
+    expect(occupantOf(state, 0, 3, 2)).toBeUndefined();
+  });
+});
+
+describe('planPlacement', () => {
+  const state = [deck(1, 0), deck(2, 1), cell(3, 0, 0)];
+
+  const codeOf = (fn: () => unknown): string | undefined => {
+    try {
+      fn();
+      return undefined;
+    } catch (error) {
+      return error instanceof MoveError ? error.code : 'outro erro';
+    }
+  };
+
+  it('agenda em célula livre', () => {
+    expect(planPlacement(state, 1, { kind: 'cell', day: 2, slot: 5 })).toEqual([cell(1, 2, 5)]);
+  });
+
+  it('recusa célula ocupada por outra tarefa, em vez de trocar', () => {
+    expect(codeOf(() => planPlacement(state, 1, { kind: 'cell', day: 0, slot: 0 }))).toBe('OCCUPIED');
+    expect(() => planPlacement(state, 1, { kind: 'cell', day: 0, slot: 0 })).toThrow('Esse horário já está ocupado');
+  });
+
+  it('a própria célula é no-op', () => {
+    expect(planPlacement(state, 3, { kind: 'cell', day: 0, slot: 0 })).toEqual([]);
+  });
+
+  it('tirar do quadro manda para o fim do deck; no deck é no-op', () => {
+    expect(planPlacement(state, 3, { kind: 'deck' })).toEqual([deck(3, 2)]);
+    expect(planPlacement(state, 1, { kind: 'deck' })).toEqual([]);
+  });
+
+  it('mover entre células livres', () => {
+    expect(planPlacement(state, 3, { kind: 'cell', day: 4, slot: 33 })).toEqual([cell(3, 4, 33)]);
+  });
+
+  it('id inexistente e célula fora do quadro', () => {
+    expect(codeOf(() => planPlacement(state, 99, { kind: 'cell', day: 1, slot: 1 }))).toBe('NOT_FOUND');
+    expect(codeOf(() => planPlacement(state, 1, { kind: 'cell', day: 5, slot: 0 }))).toBe('INVALID_TARGET');
   });
 });
 

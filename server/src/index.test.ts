@@ -27,6 +27,52 @@ describe('main', () => {
     }
   });
 
+  it('sem --agenda a agenda fica desligada mesmo com as chaves, e a senha sai do ambiente', async () => {
+    temp = createTempDb({ migrate: false });
+    const env: Record<string, string | undefined> = {
+      API_PORT: '0',
+      DB_PATH: join(temp.dir, 'agenda-off.sqlite'),
+      ICLOUD_APPLE_ID: 'pessoa@example.com',
+      ICLOUD_APP_PASSWORD: 'abcd-efgh-ijkl-mnop',
+    };
+    const app = await main({ env, argv: ['node', 'src/index.ts'], loadDotEnv: false, logger: false });
+    try {
+      expect(env).not.toHaveProperty('ICLOUD_APP_PASSWORD');
+      expect(env).not.toHaveProperty('ICLOUD_APPLE_ID');
+      // Segunda-feira da semana atual (o main usa o relógio real).
+      const today = new Date(Date.now());
+      const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7));
+      const week = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`;
+      // Com API_PORT=0 só a porta do Vite (5173) está no allowlist do guard.
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/calendar/events?week=${week}`,
+        headers: { host: '127.0.0.1:5173', 'x-quadro-client': '1' },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ enabled: false, events: [] });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('com --agenda e senha fora do formato, não sobe e não ecoa a senha', async () => {
+    temp = createTempDb({ migrate: false });
+    const password = 'SenhaDoAppleID123';
+    const env = {
+      API_PORT: '0',
+      DB_PATH: join(temp.dir, 'agenda-bad.sqlite'),
+      ICLOUD_APPLE_ID: 'pessoa@example.com',
+      ICLOUD_APP_PASSWORD: password,
+    };
+    const error = await main({ env, argv: ['node', 'src/index.ts', '--agenda'], loadDotEnv: false, logger: false }).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('senha de app');
+    expect((error as Error).message).not.toContain(password);
+  });
+
   it('o banco padrão fica em server/data', () => {
     expect(DEFAULT_DB_PATH.replaceAll('\\', '/')).toMatch(/server\/data\/quadro\.sqlite$/);
   });

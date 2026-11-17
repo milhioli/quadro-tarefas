@@ -27,6 +27,8 @@ describe('isAllowedHost', () => {
     '127.0.0.1:8080',
     '[::1]:3001',
     '0.0.0.0:3001',
+    '192.168.0.10:5173',
+    '192.168.0.10:3001',
     'localhost:3001.evil.com',
     '',
   ])('rejeita "%s"', (host) => {
@@ -45,7 +47,14 @@ describe('isAllowedOrigin', () => {
     expect(isAllowedOrigin('http://localhost:5173', DEFAULT_GUARD_OPTIONS)).toBe(true);
   });
 
-  it.each(['null', 'http://localhost:8080', 'http://127.0.0.1:5173.evil.com', 'https://127.0.0.1:5173', 'http://evil.com'])(
+  it.each([
+    'null',
+    'http://localhost:8080',
+    'http://127.0.0.1:5173.evil.com',
+    'https://127.0.0.1:5173',
+    'http://evil.com',
+    'http://192.168.0.10:5173',
+  ])(
     'rejeita %s',
     (origin) => {
       expect(isAllowedOrigin(origin, DEFAULT_GUARD_OPTIONS)).toBe(false);
@@ -67,6 +76,18 @@ describe('isSafeMethod', () => {
 });
 
 describe('guard na aplicação', () => {
+  it('acesso pela rede local (IP da máquina) é recusado: só loopback', async () => {
+    t = await createTestApp();
+    const byHost = await t.raw({ method: 'GET', url: '/api/tasks', headers: { host: '192.168.0.10:5173' } });
+    expect(byHost.statusCode).toBe(403);
+    const byOrigin = await t.raw({
+      method: 'GET',
+      url: '/api/tasks',
+      headers: { host: '127.0.0.1:5173', origin: 'http://192.168.0.10:5173' },
+    });
+    expect(byOrigin.statusCode).toBe(403);
+  });
+
   it.each(['localhost.evil.com:3001', '127.0.0.1.evil.com:3001', 'evil.com'])('Host %s → 403', async (host) => {
     t = await createTestApp();
     const res = await t.raw({ method: 'GET', url: '/api/tasks', headers: { host } });
