@@ -77,9 +77,11 @@ interface Notice {
 
 export interface AppProps {
   clock: Clock;
+  /** Barra acima do cabeçalho (quadro aberto, conta e Sair), vinda do Shell. */
+  toolbar?: ReactNode;
 }
 
-export function App({ clock }: AppProps) {
+export function App({ clock, toolbar }: AppProps) {
   const today = useToday(clock);
   // Celular: agenda por toque. Desktop: deck + quadro com arraste.
   const isMobile = useMediaQuery(MOBILE_QUERY);
@@ -221,6 +223,7 @@ export function App({ clock }: AppProps) {
 
   return (
     <div className="app">
+      {toolbar}
       <header className="app-header">
         <div className="app-header__intro">
           <h1 className="app-title">Quadro de tarefas</h1>

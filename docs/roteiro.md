@@ -2,18 +2,95 @@
 # Plano — Quadro multiusuário: contas, grupos em tempo real, agendas por pessoa e tarefas com duração
 
 > **Status:** documento de arquitetura e roteiro. Cada fase vira um plano próprio quando for a vez dela.
-> **Andamento (17/11/2026):**
+> **Andamento (19/11/2026):**
 > - **Fase 0 (E2E com Playwright 1.64.1):** feita e validada, 8 jornadas.
 > - **Fase 1 (tarefas com duração):** feita e validada, com 786 testes de unidade/integração e 12 jornadas E2E. As escolhas que o plano deixava em aberto:
 >   - os triggers de sobreposição no banco foram incluídos;
 >   - no celular, a tarefa longa aparece numa linha só, sem altura proporcional;
 >   - o modificador do overlay chama-se `keepOverlayUnderPointer`.
 > - **E2E na máquina do usuário:** confirmado em 17/11/2026. A primeira rodada revelou uma corrida no foco da toolbar do editor, já corrigida (`keepEditorFocus`). O teste humano visual da Fase 1 (seção "Ao fim de cada fase") segue com o usuário.
-> - **Próximo passo: Fase 2.** Antes de escrever o plano dela, pergunte ao usuário:
->   - (a) se é só contas e quadros rodando no 127.0.0.1 (**2a**, recomendado) ou já com deploy (**2b**: Docker, Caddy, Litestream, domínio e onde hospedar);
->   - (b) quem pode criar conta: aprovação do admin (recomendado), só domínio(s) Workspace (`ALLOWED_GOOGLE_HD`), ou o domínio entra direto e o resto aguarda aprovação.
->
->   Depois: o plano da fase, a revisão do `cybersecurity-reviewer`, a aprovação e só então o código.
+> - **Fase 2 dividida (18/11/2026).**
+>   - **Decisões do usuário:**
+>     - escopo **2a** primeiro: contas e quadros no 127.0.0.1, com login Google de verdade;
+>     - o deploy fica para a **2b**;
+>     - **cadastro aberto** a qualquer conta Google.
+>   - **Plano da 2a:** aprovado em 18/11/2026, com a revisão do `cybersecurity-reviewer` (3 bloqueantes, 11 recomendados e 5 opcionais incorporados) e a leitura do código por um agente de planejamento. O plano completo está em `docs/fase-2a.md`.
+>   - **Cadastro aberto:** o revisor o considera aceitável na 2a, porque tudo fica no 127.0.0.1. **A 2b não pode abrir para a rede sem:**
+>     - admin com auditoria (R10);
+>     - rate limit e tetos contra contas em série, convites e grupos, e bloqueio de reconvite (R7);
+>     - `DELETE /me` com a limpeza completa (R9);
+>     - `/privacidade` e `QUADRO_CONTACT_EMAIL` publicados;
+>     - cookie `__Host-` com `Secure`.
+>   - **Mudanças em relação ao desenho original da Fase 2, neste documento:**
+>     - o cadastro passa de "domínio ou aprovação" para aberto;
+>     - o estado do OAuth fica no servidor, e não num cookie `__Host-quadro_oauth` com o conteúdo;
+>     - o papel `viewer`, o lookup de usuário e a passagem de posse ficam para depois;
+>     - o login de desenvolvimento roda num entrypoint separado (`server/src/e2eEntry.ts`).
+>   - **Notas para as próximas fases:**
+>     - **Fase 4:** decidir se conectar a agenda da Apple exige aprovação do admin. Com cadastro aberto, a custódia da senha de app passaria a valer para estranhos, e a aprovação das 8 condições supunha cadastro fechado.
+>     - **Cookie entre portas:** no 127.0.0.1 o cookie de sessão não separa porta, e qualquer servidor local o recebe. Até a 2b (`__Host-` + `Secure`), a defesa entre projetos locais é o guard (`Origin` e `X-Quadro-Client`).
+>   - **Implementação da 2a (concluída em 19/11/2026):** feita nos passos de `docs/fase-2a.md`, cada um validado pelo `test-runner`.
+>     - **Passos 1–3 (18/11):** feitos e aprovados pelo `test-runner`, com 804 testes.
+>       - Entraram `openid-client` 6.8.9 e `@fastify/cookie` 11.1.5, com o `jose` fixado em 6.2.15 por override.
+>       - Mutação sem `Origin` passou a dar 403 (o `testApp` e o E2E agora mandam `Origin`).
+>       - O `guardedFetch` ganhou allowlist por provedor e o `createOidcFetch`.
+>     - **Passos 4–6 (18/11):** feitos e aprovados pelo `test-runner`, com 818 testes.
+>       - Entraram os schemas de conta, quadro e convite no `shared`.
+>       - A migração 3 cria as contas, sessões, quadros e membros, leva as tarefas para o quadro legado 1 e torna índices e triggers por quadro.
+>       - O `TaskStore` filtra toda consulta por quadro e incrementa o `boards.version`.
+>     - **Passos 7–8 (18/11):** feitos e aprovados pelo `test-runner`, com 897 testes.
+>       - Configuração de login (`APP_ORIGIN` só loopback, segredo do Google em closure).
+>       - Sessão por cookie com sha256 no banco, negação por padrão auditada em teste e conta desativada sem acesso.
+>       - Contas `dev:` só valem no `e2eEntry`.
+>       - Perfil com o handle (`seq 0` só para o `QUADRO_ADMIN_EMAIL`, gravado uma vez) e o quadro legado do admin.
+>       - Na primeira rodada, 1 falha: um comentário citava o `e2eEntry`. Já corrigida.
+>     - **Passos 9–10 (18/11):** feitos e aprovados pelo `test-runner`, com 928 testes.
+>       - Tarefas por quadro, com o quadro tirado da própria linha: 404 igual para "não existe" e "não é seu", com o admin testado como intruso.
+>       - Quadros, convites com aceite e recusa, membros (remover e sair), tudo com `audit_log`.
+>       - A agenda responde só para o admin.
+>       - O log guarda só método e caminho, sem a query.
+>       - Saíram as rotas antigas `/api/tasks` (lista e criação) e `/api/board/reset`.
+>     - **Passo 11 (18/11):** feito e aprovado pelo `test-runner`, com 1010 testes e nenhuma chamada de rede real.
+>       - O provider Google usa `openid-client` com PKCE S256, state, nonce e `enableNonRepudiationChecks`. O segredo vai só no corpo da troca do code.
+>       - O teste do provider usa um Google falso que assina o ID token com uma chave RSA gerada no teste. Ele recusa outra chave, nonce errado, outro cliente, outro emissor, token expirado, `alg none` e HS256.
+>       - Endpoints do discovery fora dos hosts do Google deixam o login indisponível. Depois de uma falha, o discovery tenta de novo no máximo uma vez por minuto.
+>       - `GET /api/auth/google/start` exige `Sec-Fetch-Site` same-origin ou none, guarda state, nonce e verifier no servidor por 10 min e põe só um id no cookie `quadro_oauth`.
+>       - `GET /api/auth/google/callback` consome o login pelo cookie, confere o state antes do provedor e monta a URL de volta pelo `APP_ORIGIN`. Ele recusa e-mail não verificado, sub `dev:` e conta desativada.
+>       - Toda falha volta para `/?login=erro`, `cancelado` ou `indisponivel`, sem sessão. O log leva só o tipo.
+>       - Decisão nova: em outro host (ex.: `localhost`), o start volta para a raiz do `APP_ORIGIN` em vez de seguir. Seguir faria o navegador marcar o salto como cross-site.
+>     - **Passo 12.1 (18/11):** feito e aprovado pelo `test-runner`, com 1036 testes.
+>       - O cliente do web usa as rotas por quadro e ganhou as de conta, quadros, membros e convites.
+>       - As queries guardam as tarefas por quadro (`['boards', id, 'tasks']`) e não repetem erro 4xx.
+>       - Todo 401 zera o cache e volta ao login.
+>       - A API fake simula tarefas por quadro e o estado de conta.
+>     - **Passos 12.2–12.4 (18/11):** feitos e aprovados pelo `test-runner`, com 1117 testes. Na primeira rodada, 1 falha de tipo num teste (chave `api` repetida), já corrigida.
+>       - O `Shell` escolhe a tela pela sessão: login, primeiro acesso ou o quadro.
+>       - O login com Google é um link comum para o start. O login de teste só aparece no servidor de E2E.
+>       - O primeiro acesso valida o nome de usuário e o nome de exibição antes da API.
+>       - A barra da sessão tem o seletor de quadro, os convites, o handle em `<bdi>` e o "Sair".
+>       - O modal do grupo convida pelo handle, remove, renomeia, apaga e sai, sempre com confirmação para apagar e sair.
+>       - O `localStorage` guarda só `quadro:board`, conferido contra os quadros da pessoa e apagado ao sair.
+>       - Decisão nova: a barra da sessão entra no `App` por uma prop `toolbar`, para não quebrar o layout de altura fixa.
+>     - **Passo 13 (18/11):** escrito. O `test-runner` aprovou o typecheck dos 5 alvos e os 1117 testes.
+>       - O `e2e-validator` recusou rodar a suíte (BLOQUEADO): o runbook da skill não cobre este projeto e os specs não têm as anotações `@journey`/`@covers`. Conforme o CLAUDE.md, o E2E fica com o usuário (`npm run test:e2e`).
+>       - O Playwright sobe `npm run dev:e2e`, e cada teste entra com uma conta nova (fixture `account`). Saiu a `cleanDatabase`.
+>       - O `request` das fixtures é o `page.request`, e uma segunda pessoa entra por `openAs`, num contexto próprio.
+>       - Jornadas novas em `e2e/contas.spec.ts`: login de teste e primeiro acesso; grupo com convite, aceite e saída entre duas pessoas; IDOR pela API; `Origin` de outro projeto local.
+>     - **Passo 14 (18/11):** feito. O CLAUDE.md ganhou a seção "Login e sessão" e o contrato novo da API, e o README e o `.env.example` explicam o login com Google.
+>       - Decisão registrada: agentes podem subir `npm run dev:e2e`, que é o servidor do Playwright.
+>       - O corpo deste roteiro ganhou notas "Na 2a" onde o desenho original mudou: cadastro aberto, estado do OAuth no servidor, sem `viewer` e admin sem rotas próprias até a 2b.
+>       - Revalidação final pelo `test-runner` (19/11): APROVADO, com o typecheck dos 5 alvos, 1117 testes passando e 0 falhas, além dos testes irmãos e dos greps do CLAUDE.md.
+>     - **Passo 15 (19/11), teste humano:** o usuário aprovou os 6 itens.
+>       - O login Google real com o e-mail do admin deu o handle `_00`. As 2 tarefas do banco antigo apareceram no "Meu quadro", migradas para a v3 na subida.
+>       - Uma segunda conta Google real, cadastrada como usuária de teste do OAuth, recebeu o próprio número.
+>       - O grupo funcionou com convite e aceite. O quadro 1 deu 404 para a outra conta, e o "Sair" voltou ao login.
+>       - O banco foi para um arquivo fora do repositório, pelo `DB_PATH`. O antigo tinha quase tudo no `-wal`, por isso a cópia foi feita com `VACUUM INTO`, aberto só para leitura. Copiar só o `.sqlite` teria perdido as tarefas.
+>     - **E2E na máquina do usuário (19/11):** passou, inclusive as jornadas novas de `e2e/contas.spec.ts`.
+>     - **Commit e push:** em 19/11, a pedido do usuário.
+> - **Fase 2b (decidida em 19/11/2026):**
+>   - **A ordem do roteiro se mantém:** a 2b vem antes da Fase 3, que é o tempo real.
+>   - **Escopo:** o usuário ainda não tem VPS nem domínio. Por isso, a 2b prepara o código e o pacote de deploy (Dockerfile, Caddy e Litestream), testados localmente. A publicação fica para quando houver o servidor.
+>   - **Próximo passo:** o plano da 2b, com a revisão do `cybersecurity-reviewer`.
 > **Revisão 2 (17/11/2026):** o usuário esclareceu que 500 era só um exemplo: **não há teto de usuários** (ver "Crescer sem teto"). Privacidade, plano de incidente e retenção deixaram de ser pendências e viraram itens concretos (seção "Privacidade, incidente e retenção").
 > **Revisão 3 (17/11/2026):** os eventos da agenda ficam em memória enquanto a pessoa usa o app, e entra a **Fase 0: testes E2E no navegador** (Playwright), antes da Fase 1.
 > **Revisões incorporadas:** leitura independente do código para a Fase 1 (agente de planejamento) e parecer do `cybersecurity-reviewer` para as fases 2–4 (7 bloqueantes, 11 recomendados, 7 opcionais e 9 contradições com o CLAUDE.md/código — todos tratados; resumo na seção final). Os três itens que antes iam para o usuário ou o encarregado (privacidade, incidente e retenção) agora estão resolvidos na seção própria.
@@ -31,7 +108,7 @@ Restrição explícita: **simplicidade, fugindo de over-engineering.** O desenho
 ### Decisões do usuário (17/11/2026)
 - **Faixa de horário** = tarefa com duração (ocupa N slots seguidos no mesmo dia). Grade do quadro continua fixa (05:00–22:00).
 - **Agendas:** Apple por **senha de app custodiada no servidor, criptografada** (aceita pela revisão de segurança **sob 8 condições**, listadas na Fase 4); Google por **OAuth**, com os dois escopos mais estreitos que servem (`calendar.events.readonly` + `calendar.calendarlist.readonly`, para a pessoa escolher quais calendários entram — um só escopo `calendar.readonly` seria mais largo e também sensível).
-- **Login com Google.** Cada pessoa escolhe um **nome de usuário**; o sistema gera o **handle `nome_NN`**, em que `NN` é uma **sequência global** que começa em `00` (**o `00` é o administrador**) e cresce de 1 em 1 sem limite (`99` → `100`). O handle é o que se usa para **achar pessoas e montar grupo**. Ajuste da revisão: o `00` não é "quem logar primeiro" (seria uma corrida numa URL pública), e sim a conta cujo e-mail está em `QUADRO_ADMIN_EMAIL`; e **quem pode criar conta** é decidido por domínio Workspace (`hd`) e/ou aprovação do admin, não cadastro aberto.
+- **Login com Google.** Cada pessoa escolhe um **nome de usuário**; o sistema gera o **handle `nome_NN`**, em que `NN` é uma **sequência global** que começa em `00` (**o `00` é o administrador**) e cresce de 1 em 1 sem limite (`99` → `100`). O handle é o que se usa para **achar pessoas e montar grupo**. Ajuste da revisão: o `00` não é "quem logar primeiro" (seria uma corrida numa URL pública), e sim a conta cujo e-mail está em `QUADRO_ADMIN_EMAIL`; e **quem pode criar conta** é decidido por domínio Workspace (`hd`) e/ou aprovação do admin, não cadastro aberto. **Mudou em 18/11/2026 (2a):** o usuário decidiu por cadastro aberto, aceitável enquanto tudo roda no 127.0.0.1; o mínimo para abrir na 2b está no Andamento.
 - **Agora:** só documentar.
 - **Sem teto de usuários:** 500 era um exemplo da pergunta, não um requisito de limite.
 - **Contato e incidente:** um e-mail que o usuário vai criar entra no `.env` como `QUADRO_CONTACT_EMAIL`. Ele é o canal de privacidade e o remetente dos avisos de incidente.
@@ -97,7 +174,7 @@ audit_log(id, at, actor_user_id, action, target_kind, target_id)             -- 
 
 - **Grupo = quadro compartilhado.** O quadro pessoal é um `board` `personal` com 1 membro e **recusa membros**. Um grupo é um `board` `group` com N membros. Nada de entidade "grupo" separada: evita duplicar permissão.
 - **Handle:** `username` com 3–20 caracteres `[a-z0-9._]`, sem precisar ser único (o `seq` já garante unicidade do handle). `seq` vem de um contador único (`INSERT` com `MAX(seq)+1` dentro de `BEGIN IMMEDIATE`). **`seq = 0` e `role = 'admin'` só para a conta cujo e-mail verificado é igual a `QUADRO_ADMIN_EMAIL`**; qualquer outro login antes dela vê "aguardando o administrador" e não cria `users`. Mostrar o handle com pelo menos 2 dígitos (`00`…`99`, depois `100`). O admin não ganha selo na interface (o `_00` já o identifica; não piorar).
-- **Quem pode criar conta:** `ALLOWED_GOOGLE_HD` (lista de domínios Workspace, conferida no claim `hd` do ID token) **e/ou** aprovação do admin antes do `INSERT` em `users`. Sem isso não existe conta nem `seq`. Evita homônimos para engenharia social (`ana_57` adicionada como se fosse a Ana) e evita custodiar credencial de iCloud de estranhos.
+- **Quem pode criar conta:** `ALLOWED_GOOGLE_HD` (lista de domínios Workspace, conferida no claim `hd` do ID token) **e/ou** aprovação do admin antes do `INSERT` em `users`. Sem isso não existe conta nem `seq`. Evita homônimos para engenharia social (`ana_57` adicionada como se fosse a Ana) e evita custodiar credencial de iCloud de estranhos. **Na 2a:** cadastro aberto, por decisão do usuário (ver o Andamento); o convite com aceite e o nome de exibição limitam o risco de homônimo.
 - **Achar pessoas:** só por **handle exato**, via `POST /api/users/lookup {handle}` (corpo, não query: a query cai no log do pino), com `X-Quadro-Client`, devolvendo nome e handle. Resposta idêntica em forma e tempo para inexistente e desativado. Rate limit de 20/min e 200/dia por usuário; `audit_log` grava só a contagem. Sem listagem nem busca por prefixo. Opcional: toggle "permitir que me encontrem pelo handle".
 - **Entrar num grupo exige aceite:** o owner convida pelo handle (`status = 'invited'`); a pessoa aceita ou recusa. Ninguém é colocado num quadro sem querer (vetor de assédio, de spam com conteúdo rico e de observação da presença).
 - **Dado do quadro atual:** a migração cria o quadro pessoal do admin na primeira entrada dele e move as tarefas existentes para lá.
@@ -174,17 +251,17 @@ Não depende de login nem de rede. É a fase mais acoplada ao código atual e a 
 A base de tudo que é multiusuário.
 
 - **Login Google (OIDC, authorization code + PKCE):** biblioteca `openid-client` (mantida, certificada; só valida o ID token e troca o code — nada de montar JWT à mão). Escopos no login: só `openid email profile`. O escopo de agenda é pedido **depois**, na Fase 4 (autorização incremental). Conferir `email_verified` e `hd`.
-  - **Vínculo com o navegador (B6):** `state`, `nonce` e `code_verifier` vão num cookie `__Host-quadro_oauth` (HttpOnly, Secure, SameSite=Lax, 10 min), conferido e apagado no callback; a sessão é emitida **só depois** e nunca reaproveita cookie anterior; `redirect_uri` fixo; destino pós-login só caminho relativo validado. Sem isso há login CSRF (a vítima acaba logada na conta do atacante e conecta a agenda nela) e callback forjado.
+  - **Vínculo com o navegador (B6):** `state`, `nonce` e `code_verifier` vão num cookie `__Host-quadro_oauth` (HttpOnly, Secure, SameSite=Lax, 10 min), conferido e apagado no callback; a sessão é emitida **só depois** e nunca reaproveita cookie anterior; `redirect_uri` fixo; destino pós-login só caminho relativo validado. Sem isso há login CSRF (a vítima acaba logada na conta do atacante e conecta a agenda nela) e callback forjado. **Na 2a:** `state`, `nonce` e `code_verifier` ficam no servidor (mapa em memória, 10 min); o cookie `quadro_oauth` leva só um id aleatório. Na 2b, com HTTPS, ele vira `__Host-quadro_oauth` com `Path=/`.
   - **Rede do `openid-client` (R2):** ele faz o próprio HTTP (discovery, JWKS, token) e segue redirecionamentos. Recebe `[customFetch]` apontando para o `guardedFetch` com allowlist **do provedor Google** (`accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com`). Falha no discovery não derruba a subida. `GOOGLE_CLIENT_SECRET` tem o mesmo tratamento da senha de app hoje: lido, apagado do `env`, vive em closure.
 - **Sessão:** cookie `__Host-quadro_session` (`HttpOnly; Secure; SameSite=Lax; Path=/`), valor aleatório de 256 bits, **hash** guardado em `sessions`, expiração deslizante (30 dias, renovada a cada uso, máximo absoluto de 90). Logout é `POST` com `X-Quadro-Client`, apaga a linha e fecha os sockets dessa sessão. Sem JWT no cookie: revogação imediata e zero segredo de assinatura.
 - **Primeiro acesso:** só para quem passa no filtro de cadastro (domínio `hd` e/ou aprovação). Tela para escolher o `username` → cria `users` + quadro pessoal. `seq 0`/admin só para `QUADRO_ADMIN_EMAIL`.
-- **Autorização no servidor (sempre), sem IDOR (B3):** `boardId` vindo do cliente só em `POST /api/boards/:id/tasks` e nos `GET`. Em `PATCH/DELETE /api/tasks/:id` e `PUT .../position` o servidor lê `board_id` **da própria linha, dentro da transação**, e autoriza sobre ele (viewer lê; editor/owner escreve; owner convida e remove). Tarefa de quadro alheio responde **404**, nunca 403.
+- **Autorização no servidor (sempre), sem IDOR (B3):** `boardId` vindo do cliente só em `POST /api/boards/:id/tasks` e nos `GET`. Em `PATCH/DELETE /api/tasks/:id` e `PUT .../position` o servidor lê `board_id` **da própria linha, dentro da transação**, e autoriza sobre ele (viewer lê; editor/owner escreve; owner convida e remove). Tarefa de quadro alheio responde **404**, nunca 403. **Na 2a:** os papéis são só `owner` e `editor`; o `viewer` fica para depois.
 - **Grupo:** `POST /api/boards` (cria grupo), `POST /api/boards/:id/invites {handle}` (owner convida), `POST /api/invites/:id/accept|decline`, `DELETE .../members/:userId`, sair do grupo. Owner não remove a si mesmo (passa a posse ou apaga o quadro). Convite por link e papéis finos ficam para depois.
 - **Guard:** Host e Origin por igualdade continuam, agora contra `APP_ORIGIN` (uma origem só; atrás do Caddy o `Host` vem **sem porta**, então a regex de `isAllowedHost` e os testes mudam, mantendo "qualquer outro host → 403"). **Com cookie, método não seguro sem `Origin` passa a ser 403** (hoje `Origin` ausente é aceito). `trustProxy: '127.0.0.1'` (string, nunca `true`). Rate limit (`@fastify/rate-limit`) por sessão/IP em login, lookup, convite e agenda.
 - **Estáticos (R11):** Vite faz o build; Fastify serve só `web/dist` com `@fastify/static` (`dotfiles: 'deny'`, fallback SPA só fora de `/api`), `index.html` com `no-store` e assets com hash `immutable`. A CSP atual (`default-src 'none'`) é para JSON; o HTML recebe: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' wss://<APP_ORIGIN>; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`. O TipTap injeta `<style>` por padrão → `injectCSS: false` e CSS no bundle, senão pede `unsafe-inline`. COOP/CORP `same-origin`; HSTS no Caddy.
 - **Deploy:** Dockerfile (Node 24, `npm ci --ignore-scripts`), Caddy com TLS automático, volume persistente para o `.sqlite`, **Litestream** replicando para um bucket privado com versionamento, credencial própria e mínima, **retenção curta e declarada (7 dias)**. **Caddy e Node no mesmo namespace de rede** (mesmo container, `network_mode: service:…` no Compose, ou VM com systemd): o Node continua em `127.0.0.1` (`API_HOST` fixo em `server/src/config.ts`; o CLAUDE.md proíbe `0.0.0.0`/`host: true`), e isso é a pré-condição do `trustProxy`. `PRAGMA secure_delete=ON` para linhas apagadas não ficarem em páginas livres do arquivo (e do backup). Health check já existe.
 - **Configuração:** `.env.example` ganha `APP_ORIGIN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `QUADRO_ADMIN_EMAIL`, `ALLOWED_GOOGLE_HD`, `QUADRO_CONTACT_EMAIL` e passa a dizer que em produção essas chaves são obrigatórias. A chave mestra de cifra **não** entra no `.env`: ver Fase 4. Agentes nunca leem o `.env`.
-- **Admin (`seq 0`), limitado (R10):** `role='admin'` **não** dá acesso a quadros, tarefas nem agendas de ninguém. Rotas admin separadas e auditadas: listar usuários (só handle, e-mail e `last_seen_at`), aprovar cadastro, desativar conta (= apagar sessões, fechar sockets, apagar conexões de agenda e cache, bloquear login). Admin não desativa a si mesmo. Sem painel; um par de rotas basta.
+- **Admin (`seq 0`), limitado (R10):** `role='admin'` **não** dá acesso a quadros, tarefas nem agendas de ninguém. Rotas admin separadas e auditadas: listar usuários (só handle, e-mail e `last_seen_at`), aprovar cadastro, desativar conta (= apagar sessões, fechar sockets, apagar conexões de agenda e cache, bloquear login). Admin não desativa a si mesmo. Sem painel; um par de rotas basta. **Na 2a:** o admin só existe como papel (`seq 0`, agenda da Apple). As rotas de admin, com auditoria do acesso, ficam para a 2b (R10).
 - **CLAUDE.md:** a frase "o app não tem autenticação" e a regra "não abra túnel / não ponha IP na allowlist" são reescritas com a nova premissa (uma origem, `APP_ORIGIN`, sessão por cookie), não apenas ignoradas. A lista de dependências que tocam conteúdo externo passa a incluir `openid-client` (via `customFetch` guardado) e `ws` (parseia frames de clientes não confiáveis).
 
 ### Fase 3 — Tempo real e presença
@@ -432,11 +509,11 @@ Skills consultadas pelo revisor: personal-data, personal-data-backend, session-a
 
 **Bloqueantes (todos incorporados):**
 - **B1** admin por "primeira conta" era corrida → `QUADRO_ADMIN_EMAIL` (Fase 2).
-- **B2** cadastro aberto → `hd` e/ou aprovação do admin (Fase 2).
+- **B2** cadastro aberto → `hd` e/ou aprovação do admin (Fase 2). Em 18/11/2026 o usuário escolheu cadastro aberto na 2a, e o revisor o considerou aceitável no 127.0.0.1.
 - **B3** `boardId` do cliente em `PATCH/DELETE/PUT :id` era IDOR → `board_id` lido da linha; 404 (Fase 2).
 - **B4** membro removido continuava no socket → `evict`/`evictSession` (Fase 3).
 - **B5** "ocupado" sem dizer onde o título sai → projeção por leitor no servidor (Fase 4).
-- **B6** `state`/`nonce`/`verifier` sem vínculo com o navegador → cookie `__Host-quadro_oauth` (Fase 2).
+- **B6** `state`/`nonce`/`verifier` sem vínculo com o navegador → cookie `__Host-quadro_oauth` (Fase 2). Na 2a o vínculo ficou no servidor, com só um id no cookie.
 - **B7** chave mestra no `.env` junto do banco e header Basic retido na memória → `QUADRO_MASTER_KEY_FILE`, decifra por chamada, Apple ID no ciphertext, AAD com `connection_id` (Fase 4).
 
 **Recomendados (todos incorporados):** R1 `Origin` obrigatório em método não seguro, `__Host-`, logout `POST`, `Origin` exata no upgrade; R2 allowlist por provedor e `customFetch` no `openid-client`; R3 `email_verified`/`hd`/escopo concedido, `offline`+`consent`, access token só em memória, client secret em closure; R4 rate limit no PROPFIND de teste; R5 lookup por `POST`, rate limit, resposta idêntica, sem handle no log; R6 convite com aceite, quadro pessoal recusa membros, owner não se remove; R7 identidade carimbada pelo servidor na presença; R8 erros tipados e `redact` da query; R9 eliminação pela própria pessoa, retenção, purga de cache, Litestream curto, rotação de chave; R10 admin sem acesso a dados, desativar = apagar tudo; R11 CSP do HTML, `injectCSS: false`, `@fastify/static` restrito, `trustProxy: '127.0.0.1'`.

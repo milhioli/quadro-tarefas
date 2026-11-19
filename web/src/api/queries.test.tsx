@@ -1,4 +1,4 @@
-import type { Task } from '@quadro/shared';
+import type { MeResponse, Task } from '@quadro/shared';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { createFakeApi, makeTask } from '../test/fakeApi';
@@ -6,8 +6,12 @@ import { createTestQueryClient, createWrapper } from '../test/render';
 import { ApiError } from './client';
 import {
   CALENDAR_STALE_MS,
-  TASKS_KEY,
+  LOGGED_OUT,
+  ME_KEY,
   createQueryClient,
+  resetSession,
+  shouldRetry,
+  tasksKey,
   useCalendarEvents,
   useCreateTask,
   useDeleteTask,
@@ -18,19 +22,97 @@ import {
   useUpdateTask,
 } from './queries';
 
-function setup(initial: Task[] = []) {
+function setup(initial: Task[] = [], boardId = 1) {
   const api = createFakeApi(initial);
   const queryClient = createTestQueryClient();
-  const wrapper = createWrapper(api, queryClient);
-  const cache = () => queryClient.getQueryData<Task[]>(TASKS_KEY);
+  const wrapper = createWrapper(api, queryClient, boardId);
+  const cache = () => queryClient.getQueryData<Task[]>(tasksKey(boardId));
   return { api, queryClient, wrapper, cache };
 }
 
+const SIGNED_IN: MeResponse = {
+  user: { id: 1, handle: 'admin_00', displayName: 'Admin', role: 'admin', personalBoardId: 1 },
+  pendingProfile: null,
+};
+
 describe('createQueryClient', () => {
-  it('não repete mutações e tenta a leitura uma vez a mais', () => {
+  it('não repete mutações; a leitura tenta uma vez a mais, exceto em erro 4xx', () => {
     const defaults = createQueryClient().getDefaultOptions();
     expect(defaults.mutations?.retry).toBe(false);
-    expect(defaults.queries?.retry).toBe(1);
+    expect(defaults.queries?.retry).toBe(shouldRetry);
+  });
+
+  it('shouldRetry: 4xx nunca; rede e 5xx uma vez', () => {
+    for (const status of [400, 401, 403, 404, 409]) {
+      expect(shouldRetry(0, new ApiError(status, 'VALIDATION', 'x')), String(status)).toBe(false);
+    }
+    expect(shouldRetry(0, new ApiError(500, 'INTERNAL', 'x'))).toBe(true);
+    expect(shouldRetry(0, new ApiError(0, 'NETWORK', 'x'))).toBe(true);
+    expect(shouldRetry(1, new ApiError(500, 'INTERNAL', 'x'))).toBe(false);
+  });
+});
+
+describe('sessão no cache', () => {
+  it('resetSession apaga tudo da conta anterior e grava o me novo', () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(ME_KEY, SIGNED_IN);
+    queryClient.setQueryData(tasksKey(1), [makeTask({ id: 1, title: 'Segredo da conta anterior' })]);
+    queryClient.setQueryData(['calendar', '2026-11-16'], { enabled: true, events: [] });
+    resetSession(queryClient, LOGGED_OUT);
+    expect(queryClient.getQueryData(ME_KEY)).toEqual(LOGGED_OUT);
+    expect(queryClient.getQueryCache().getAll().map((q) => q.queryKey)).toEqual([ME_KEY]);
+  });
+
+  it('um 401 em qualquer leitura volta para o login com o cache zerado', async () => {
+    const { api, queryClient, wrapper } = setup([makeTask({ id: 1 })]);
+    queryClient.setQueryData(ME_KEY, SIGNED_IN);
+    api.failNext('listTasks', new ApiError(401, 'UNAUTHENTICATED', 'Entre para continuar'));
+    // No app, o Shell troca para a tela de login nesse momento e desmonta o quadro.
+    renderHook(() => useTasks(), { wrapper });
+    await waitFor(() => expect(queryClient.getQueryData(ME_KEY)).toEqual(LOGGED_OUT));
+  });
+
+  it('um 401 numa mutação também', async () => {
+    const { api, queryClient, wrapper } = setup([makeTask({ id: 1 })]);
+    queryClient.setQueryData(ME_KEY, SIGNED_IN);
+    const { result } = renderHook(() => ({ tasks: useTasks(), update: useUpdateTask() }), { wrapper });
+    await waitFor(() => expect(result.current.tasks.isSuccess).toBe(true));
+    api.failNext('updateTask', new ApiError(401, 'UNAUTHENTICATED', 'Entre para continuar'));
+    await act(async () => {
+      await result.current.update.mutateAsync({ id: 1, patch: { title: 'x' } }).catch(() => undefined);
+    });
+    expect(queryClient.getQueryData(ME_KEY)).toEqual(LOGGED_OUT);
+  });
+
+  it('NEEDS_USERNAME recarrega o me', async () => {
+    const { api, queryClient, wrapper } = setup();
+    api.setMe({ user: null, pendingProfile: { suggestedName: 'Ana' } });
+    queryClient.setQueryData(ME_KEY, SIGNED_IN);
+    api.failNext('listTasks', new ApiError(403, 'NEEDS_USERNAME', 'Escolha um nome de usuário'));
+    renderHook(() => useTasks(), { wrapper });
+    await waitFor(() => expect(queryClient.getQueryState(ME_KEY)?.isInvalidated).toBe(true));
+  });
+});
+
+describe('quadro aberto', () => {
+  it('as tarefas são lidas e guardadas por quadro', async () => {
+    const { api, wrapper, queryClient } = setup([makeTask({ id: 1 }), makeTask({ id: 2, boardId: 5 })], 5);
+    const { result } = renderHook(() => useTasks(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.map((t) => t.id)).toEqual([2]);
+    expect(api.calls.find((c) => c.method === 'listTasks')?.args).toEqual([5]);
+    expect(queryClient.getQueryData(tasksKey(1))).toBeUndefined();
+  });
+
+  it('criar e resetar vão para o quadro aberto', async () => {
+    const { api, wrapper, cache } = setup([makeTask({ id: 1, boardId: 5, day: 0, slot: 0 })], 5);
+    const { result } = renderHook(() => ({ tasks: useTasks(), create: useCreateTask(), reset: useResetBoard() }), { wrapper });
+    await waitFor(() => expect(result.current.tasks.isSuccess).toBe(true));
+    await act(() => result.current.create.mutateAsync({ title: 'Nova' }));
+    await act(() => result.current.reset.mutateAsync());
+    expect(api.calls.filter((c) => c.method === 'createTask').map((c) => c.args[0])).toEqual([5]);
+    expect(api.calls.filter((c) => c.method === 'resetBoard').map((c) => c.args)).toEqual([[5]]);
+    expect(cache()?.every((t) => t.boardId === 5)).toBe(true);
   });
 });
 

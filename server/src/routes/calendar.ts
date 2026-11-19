@@ -17,8 +17,13 @@ export function isWithinRange(mondayIso: string, now: Date): boolean {
 
 /**
  * GET /api/calendar/events?week=AAAA-MM-DD (segunda-feira).
- * É a única GET com efeito externo (chamada autenticada à Apple), então
- * também exige X-Quadro-Client: um <img src> de outro site não dispara nada.
+ * - Tem efeito externo (chamada autenticada à Apple), então também exige
+ *   X-Quadro-Client: um <img src> de outro site não dispara nada. As outras
+ *   GETs com efeito externo são as navegações do login Google, que não podem
+ *   exigir o header.
+ * - Fase 2a: a credencial da agenda é global (a do dono do .env). Só o admin
+ *   (role lido do banco) recebe os eventos; os demais recebem `enabled:false`
+ *   sem nenhuma chamada à Apple. A agenda por pessoa é a Fase 4.
  */
 export function registerCalendarRoutes(app: FastifyInstance, service: CalendarService, now: Now): void {
   app.get(
@@ -33,7 +38,7 @@ export function registerCalendarRoutes(app: FastifyInstance, service: CalendarSe
       if (!isWithinRange(week, now())) {
         throw new HttpError(400, 'VALIDATION', 'Semana fora do intervalo permitido');
       }
-      if (!service.enabled) return { enabled: false, events: [] };
+      if (!service.enabled || request.user?.role !== 'admin') return { enabled: false, events: [] };
       return { enabled: true, events: await service.getWeek(week) };
     },
   );

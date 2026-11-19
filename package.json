@@ -18,7 +18,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc -p shared && tsc -p server && tsc -p web && tsc -p web/tsconfig.node.json && tsc -p e2e",
     "dev:agenda": "concurrently -k -n api,web -c blue,green \"npm run dev:agenda -w server\" \"npm run dev -w web\"",
-    "test:e2e": "playwright test -c e2e"
+    "test:e2e": "playwright test -c e2e",
+    "dev:e2e": "concurrently -k -n api,web -c blue,green \"npm run dev:e2e -w server\" \"npm run dev -w web\""
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
@@ -26,5 +27,8 @@
     "concurrently": "10.0.7",
     "typescript": "6.0.3",
     "vitest": "5.1.0"
+  },
+  "overrides": {
+    "jose": "6.2.15"
   }
 }

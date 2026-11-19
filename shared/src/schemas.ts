@@ -85,12 +85,154 @@ export interface Task {
   span: number;
   /** Ordem no deck; null quando a tarefa está no quadro. */
   deckOrder: number | null;
+  /** Quadro (pessoal ou de grupo) a que a tarefa pertence. Nunca muda. */
+  boardId: number;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface TaskListResponse {
   tasks: Task[];
+}
+
+// ---------- Contas, quadros e convites ----------
+
+/**
+ * Controles e formatação invisível (inclui os de direção, como U+202E, que
+ * invertem visualmente o texto ao lado). Proibidos em nomes que outras pessoas
+ * leem, para um nome não se disfarçar de outro handle.
+ */
+const HIDDEN_CHARACTERS = /[\p{Cc}\p{Cf}]/u;
+
+export const USERNAME_PATTERN = /^[a-z0-9._]{3,20}$/;
+export const RESERVED_USERNAMES: readonly string[] = Object.freeze(['admin', 'suporte', 'quadro', 'root', 'sistema']);
+export const DISPLAY_NAME_MAX_LENGTH = 40;
+export const BOARD_NAME_MAX_LENGTH = 60;
+
+export const usernameSchema = z
+  .string({ error: 'Informe um nome de usuário' })
+  .trim()
+  .toLowerCase()
+  .regex(USERNAME_PATTERN, 'Use de 3 a 20 letras minúsculas, números, ponto ou sublinhado')
+  .refine((value) => !RESERVED_USERNAMES.includes(value), { error: 'Esse nome de usuário é reservado' });
+
+function visibleText(label: string, max: number) {
+  return z
+    .string({ error: `Informe ${label}` })
+    .trim()
+    .min(1, `Informe ${label}`)
+    .max(max, `Use no máximo ${max} caracteres`)
+    .refine((value) => !HIDDEN_CHARACTERS.test(value), { error: 'Use só caracteres visíveis' });
+}
+
+export const displayNameSchema = visibleText('um nome de exibição', DISPLAY_NAME_MAX_LENGTH);
+export const boardNameSchema = visibleText('um nome para o quadro', BOARD_NAME_MAX_LENGTH);
+
+/** Handle público: `ana_07`, `ana_100`. O número tem pelo menos 2 dígitos. */
+export function formatHandle(username: string, seq: number): string {
+  return `${username}_${String(seq).padStart(2, '0')}`;
+}
+
+/** Lê um handle na forma canônica (a que `formatHandle` produz), ou null. */
+export function parseHandle(raw: string): { username: string; seq: number } | null {
+  const match = /^([a-z0-9._]{3,20})_(\d{2,15})$/.exec(raw.trim().toLowerCase());
+  if (!match) return null;
+  const username = match[1] as string;
+  const seq = Number(match[2]);
+  return formatHandle(username, seq) === `${username}_${match[2]}` ? { username, seq } : null;
+}
+
+export const handleSchema = z
+  .string({ error: 'Informe o nome de usuário com o número (ex.: ana_07)' })
+  .transform((value, context) => {
+    const parsed = parseHandle(value);
+    if (!parsed) {
+      context.addIssue({ code: 'custom', message: 'Use o nome de usuário com o número (ex.: ana_07)' });
+      return z.NEVER;
+    }
+    return parsed;
+  });
+
+export const profileInputSchema = z.strictObject({ username: usernameSchema, displayName: displayNameSchema });
+export const boardInputSchema = z.strictObject({ name: boardNameSchema });
+export const inviteInputSchema = z.strictObject({ handle: handleSchema });
+
+/** Login de desenvolvimento (só no entrypoint de E2E): e-mails de teste, nada mais. */
+export const devLoginSchema = z.strictObject({
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .max(254)
+    .regex(/^[a-z0-9._%+-]{1,64}@example\.com$/, 'Use um e-mail @example.com'),
+});
+
+/** `:id` e `:boardId`/`:userId` nas rotas: inteiro positivo em decimal. */
+const positiveIdSchema = z
+  .string()
+  .regex(/^[1-9]\d{0,14}$/, 'Identificador inválido')
+  .transform((value) => Number(value));
+export const boardIdParamsSchema = z.strictObject({ boardId: positiveIdSchema });
+export const memberParamsSchema = z.strictObject({ boardId: positiveIdSchema, userId: positiveIdSchema });
+
+export type UserRole = 'admin' | 'user';
+export type BoardKind = 'personal' | 'group';
+export type MemberRole = 'owner' | 'editor';
+export type MemberStatus = 'invited' | 'active';
+
+export interface MeUser {
+  id: number;
+  handle: string;
+  displayName: string;
+  role: UserRole;
+  /** O quadro pessoal (o "Meu quadro"). */
+  personalBoardId: number;
+}
+
+export interface MeResponse {
+  /** null sem sessão ou enquanto o perfil não foi criado. */
+  user: MeUser | null;
+  /** Sessão sem perfil ainda (primeiro acesso): sugestão para o nome de exibição. */
+  pendingProfile: { suggestedName: string } | null;
+}
+
+export interface AuthMethods {
+  google: boolean;
+  dev: boolean;
+}
+
+export interface BoardSummary {
+  id: number;
+  name: string;
+  kind: BoardKind;
+  role: MemberRole;
+}
+
+export interface BoardListResponse {
+  boards: BoardSummary[];
+}
+
+export interface Member {
+  userId: number;
+  handle: string;
+  displayName: string;
+  role: MemberRole;
+  status: MemberStatus;
+}
+
+export interface MemberListResponse {
+  members: Member[];
+}
+
+export interface Invite {
+  boardId: number;
+  boardName: string;
+  /** Handle de quem convidou (null se a conta não existe mais). */
+  invitedBy: string | null;
+}
+
+export interface InviteListResponse {
+  invites: Invite[];
 }
 
 export interface ResetResponse {
@@ -145,6 +287,8 @@ export type ApiErrorCode =
   | 'CONFLICT'
   | 'UPSTREAM'
   | 'UPSTREAM_AUTH'
+  | 'UNAUTHENTICATED'
+  | 'NEEDS_USERNAME'
   | 'FORBIDDEN'
   | 'PAYLOAD_TOO_LARGE'
   | 'UNSUPPORTED_MEDIA_TYPE'

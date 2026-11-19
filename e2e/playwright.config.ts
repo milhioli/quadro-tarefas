@@ -3,17 +3,17 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
+import { API_PORT, BASE_URL, WEB_PORT } from './ports';
 
 /**
  * E2E no navegador real. Regras:
- * - o servidor sobe com `npm run dev`, NUNCA `dev:agenda` (agentes nunca ligam a agenda);
+ * - o servidor sobe com `npm run dev:e2e` (server/src/e2eEntry.ts: login de teste só com
+ *   e-mails @example.com, sem Google e sem agenda), NUNCA `dev:agenda` (agentes nunca ligam a agenda);
+ * - cada teste entra com uma conta nova (fixture `account`), então o quadro pessoal começa vazio;
  * - portas próprias, para não colidir com o `npm run dev` de quem está usando;
  * - banco novo numa pasta temporária a cada execução (nunca o server/data/quadro.sqlite).
  */
 const REPO_ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
-export const API_PORT = 3101;
-export const WEB_PORT = 5273;
-export const BASE_URL = `http://127.0.0.1:${WEB_PORT}`;
 
 // Os workers reavaliam este arquivo: a variável herdada mantém a mesma pasta da execução.
 const runDir = (process.env.QUADRO_E2E_DIR ??= mkdtempSync(join(tmpdir(), 'quadro-e2e-')));
@@ -47,7 +47,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run dev',
+    command: 'npm run dev:e2e',
     cwd: REPO_ROOT,
     // Passa pelo proxy do Vite até a API: só responde quando os dois estão no ar.
     url: `${BASE_URL}/api/health`,
@@ -59,6 +59,9 @@ export default defineConfig({
       API_PORT: String(API_PORT),
       WEB_PORT: String(WEB_PORT),
       DB_PATH: join(runDir, 'quadro-e2e.sqlite'),
+      APP_ORIGIN: BASE_URL,
+      // Só vira admin quem entrar com este e-mail de teste (nenhuma jornada usa).
+      QUADRO_ADMIN_EMAIL: 'admin@example.com',
     },
   },
 });

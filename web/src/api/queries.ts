@@ -3,43 +3,96 @@ import {
   planMove,
   type CalendarWeekResponse,
   type CreateTaskInput,
+  type MeResponse,
   type MoveTarget,
   type ResetResponse,
   type Task,
   type UpdateTaskInput,
 } from '@quadro/shared';
-import { QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { MutationCache, QueryCache, QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from './ApiContext';
-import type { ApiError } from './client';
+import { useBoardId } from './BoardContext';
+import { ApiError } from './client';
 
-export const TASKS_KEY = ['tasks'] as const;
-export const MOVE_KEY = ['tasks', 'move'] as const;
+// ---------- Chaves do cache ----------
+// Tudo que é de um quadro começa com ['boards', id]; a lista de quadros é ['boards', 'list'].
+
+export const ME_KEY = ['me'] as const;
+export const AUTH_METHODS_KEY = ['auth', 'methods'] as const;
+export const BOARDS_KEY = ['boards', 'list'] as const;
+export const INVITES_KEY = ['invites'] as const;
+export const tasksKey = (boardId: number) => ['boards', boardId, 'tasks'] as const;
+export const moveKey = (boardId: number) => ['boards', boardId, 'tasks', 'move'] as const;
+export const membersKey = (boardId: number) => ['boards', boardId, 'members'] as const;
+export const CALENDAR_STALE_MS = 5 * 60_000;
+export const calendarKey = (mondayIso: string) => ['calendar', mondayIso] as const;
+
+/** Sem sessão (ou depois de sair). */
+export const LOGGED_OUT: MeResponse = Object.freeze({ user: null, pendingProfile: null });
+
+// ---------- Sessão ----------
+
+/**
+ * Troca de sessão (sair, 401, login de desenvolvimento): apaga do cache tudo
+ * que era da conta anterior e grava o `me` novo. A troca de conta nunca mostra
+ * dados da conta de antes.
+ */
+export function resetSession(queryClient: QueryClient, me: MeResponse): void {
+  queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== ME_KEY[0] });
+  queryClient.setQueryData<MeResponse>(ME_KEY, me);
+}
+
+/** Erro 4xx não se repete: o servidor já respondeu o que tinha a dizer. */
+export function shouldRetry(failureCount: number, error: unknown): boolean {
+  if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false;
+  return failureCount < 1;
+}
+
+/**
+ * Caches que reagem à sessão: todo 401 volta para a tela de login, com o cache
+ * zerado; um 403 NEEDS_USERNAME recarrega o `me` (leva ao primeiro acesso).
+ */
+export function createSessionCaches(getClient: () => QueryClient) {
+  const onError = (error: unknown) => {
+    if (!(error instanceof ApiError)) return;
+    if (error.status === 401) resetSession(getClient(), LOGGED_OUT);
+    else if (error.code === 'NEEDS_USERNAME') void getClient().invalidateQueries({ queryKey: ME_KEY });
+  };
+  return { queryCache: new QueryCache({ onError }), mutationCache: new MutationCache({ onError }) };
+}
 
 export function createQueryClient(): QueryClient {
-  return new QueryClient({
+  const client: QueryClient = new QueryClient({
+    ...createSessionCaches(() => client),
     defaultOptions: {
-      queries: { retry: 1, refetchOnWindowFocus: true },
+      queries: { retry: shouldRetry, refetchOnWindowFocus: true },
       mutations: { retry: false },
     },
   });
+  return client;
 }
+
+// ---------- Tarefas do quadro aberto ----------
 
 export function useTasks() {
   const api = useApi();
-  return useQuery<Task[], ApiError>({ queryKey: TASKS_KEY, queryFn: () => api.listTasks() });
+  const boardId = useBoardId();
+  return useQuery<Task[], ApiError>({ queryKey: tasksKey(boardId), queryFn: () => api.listTasks(boardId) });
 }
 
 export function useCreateTask() {
   const api = useApi();
+  const boardId = useBoardId();
   const queryClient = useQueryClient();
+  const key = tasksKey(boardId);
   return useMutation<Task, ApiError, CreateTaskInput>({
-    mutationFn: (input) => api.createTask(input),
+    mutationFn: (input) => api.createTask(boardId, input),
     onSuccess: (task) => {
-      queryClient.setQueryData<Task[]>(TASKS_KEY, (old) => [...(old ?? []).filter((t) => t.id !== task.id), task]);
+      queryClient.setQueryData<Task[]>(key, (old) => [...(old ?? []).filter((t) => t.id !== task.id), task]);
     },
     // Ex.: 409 de horário ocupado — recarrega a ocupação real.
     onError: () => {
-      void queryClient.invalidateQueries({ queryKey: TASKS_KEY });
+      void queryClient.invalidateQueries({ queryKey: key });
     },
   });
 }
@@ -52,13 +105,14 @@ export interface UpdateVariables {
 export function useUpdateTask() {
   const api = useApi();
   const queryClient = useQueryClient();
+  const key = tasksKey(useBoardId());
   return useMutation<Task, ApiError, UpdateVariables>({
     mutationFn: ({ id, patch }) => api.updateTask(id, patch),
     onSuccess: (task) => {
-      queryClient.setQueryData<Task[]>(TASKS_KEY, (old) => old?.map((t) => (t.id === task.id ? task : t)));
+      queryClient.setQueryData<Task[]>(key, (old) => old?.map((t) => (t.id === task.id ? task : t)));
     },
     onError: () => {
-      void queryClient.invalidateQueries({ queryKey: TASKS_KEY });
+      void queryClient.invalidateQueries({ queryKey: key });
     },
   });
 }
@@ -66,10 +120,11 @@ export function useUpdateTask() {
 export function useDeleteTask() {
   const api = useApi();
   const queryClient = useQueryClient();
+  const key = tasksKey(useBoardId());
   return useMutation<void, ApiError, number>({
     mutationFn: (id) => api.deleteTask(id),
     onSuccess: (_data, id) => {
-      queryClient.setQueryData<Task[]>(TASKS_KEY, (old) => old?.filter((t) => t.id !== id));
+      queryClient.setQueryData<Task[]>(key, (old) => old?.filter((t) => t.id !== id));
     },
   });
 }
@@ -91,15 +146,17 @@ interface MoveSnapshot {
 export function useMoveTask() {
   const api = useApi();
   const queryClient = useQueryClient();
+  const boardId = useBoardId();
+  const key = tasksKey(boardId);
   return useMutation<Task[], ApiError, MoveVariables, MoveSnapshot>({
-    mutationKey: MOVE_KEY,
+    mutationKey: moveKey(boardId),
     mutationFn: ({ taskId, to }) => api.moveTask(taskId, to),
     onMutate: async ({ taskId, to }) => {
-      await queryClient.cancelQueries({ queryKey: TASKS_KEY });
-      const previous = queryClient.getQueryData<Task[]>(TASKS_KEY);
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<Task[]>(key);
       if (previous) {
         try {
-          queryClient.setQueryData<Task[]>(TASKS_KEY, applyPositions(previous, planMove(previous, taskId, to)));
+          queryClient.setQueryData<Task[]>(key, applyPositions(previous, planMove(previous, taskId, to)));
         } catch {
           // Movimento inválido no estado local: o servidor decide.
         }
@@ -107,11 +164,11 @@ export function useMoveTask() {
       return { previous };
     },
     onError: (_error, _variables, snapshot) => {
-      if (snapshot?.previous) queryClient.setQueryData<Task[]>(TASKS_KEY, snapshot.previous);
-      void queryClient.invalidateQueries({ queryKey: TASKS_KEY });
+      if (snapshot?.previous) queryClient.setQueryData<Task[]>(key, snapshot.previous);
+      void queryClient.invalidateQueries({ queryKey: key });
     },
     onSuccess: (tasks) => {
-      queryClient.setQueryData<Task[]>(TASKS_KEY, tasks);
+      queryClient.setQueryData<Task[]>(key, tasks);
     },
   });
 }
@@ -129,26 +186,24 @@ export interface ResizeVariables {
 export function useResizeTask() {
   const api = useApi();
   const queryClient = useQueryClient();
+  const key = tasksKey(useBoardId());
   return useMutation<Task, ApiError, ResizeVariables, MoveSnapshot>({
     mutationFn: ({ id, span }) => api.updateTask(id, { span }),
     onMutate: async ({ id, span }) => {
-      await queryClient.cancelQueries({ queryKey: TASKS_KEY });
-      const previous = queryClient.getQueryData<Task[]>(TASKS_KEY);
-      queryClient.setQueryData<Task[]>(TASKS_KEY, (old) => old?.map((t) => (t.id === id ? { ...t, span } : t)));
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<Task[]>(key);
+      queryClient.setQueryData<Task[]>(key, (old) => old?.map((t) => (t.id === id ? { ...t, span } : t)));
       return { previous };
     },
     onError: (_error, _variables, snapshot) => {
-      if (snapshot?.previous) queryClient.setQueryData<Task[]>(TASKS_KEY, snapshot.previous);
-      void queryClient.invalidateQueries({ queryKey: TASKS_KEY });
+      if (snapshot?.previous) queryClient.setQueryData<Task[]>(key, snapshot.previous);
+      void queryClient.invalidateQueries({ queryKey: key });
     },
     onSuccess: (task) => {
-      queryClient.setQueryData<Task[]>(TASKS_KEY, (old) => old?.map((t) => (t.id === task.id ? task : t)));
+      queryClient.setQueryData<Task[]>(key, (old) => old?.map((t) => (t.id === task.id ? task : t)));
     },
   });
 }
-
-export const CALENDAR_STALE_MS = 5 * 60_000;
-export const calendarKey = (mondayIso: string) => ['calendar', mondayIso] as const;
 
 /** Agenda da Apple da semana. Erro não derruba a tela; sem retry (o servidor já pausa após senha recusada). */
 export function useCalendarEvents(mondayIso: string) {
@@ -164,10 +219,11 @@ export function useCalendarEvents(mondayIso: string) {
 export function useResetBoard() {
   const api = useApi();
   const queryClient = useQueryClient();
+  const boardId = useBoardId();
   return useMutation<ResetResponse, ApiError, void>({
-    mutationFn: () => api.resetBoard(),
+    mutationFn: () => api.resetBoard(boardId),
     onSuccess: (result) => {
-      queryClient.setQueryData<Task[]>(TASKS_KEY, result.tasks);
+      queryClient.setQueryData<Task[]>(tasksKey(boardId), result.tasks);
     },
   });
 }

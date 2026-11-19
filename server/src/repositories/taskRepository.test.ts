@@ -2,14 +2,14 @@ import { MoveError } from '@quadro/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTempDb, type TempDb } from '../../test/helpers/tempDb';
 import { fixedNow } from '../clock';
-import { createTaskRepository, type TaskRepository } from './taskRepository';
+import { createTaskStore, type TaskRepository } from './taskRepository';
 
 let temp: TempDb;
 let repo: TaskRepository;
 
 beforeEach(() => {
   temp = createTempDb();
-  repo = createTaskRepository(temp.db, fixedNow('2026-11-13T12:00:00.000Z'));
+  repo = createTaskStore(temp.db, fixedNow('2026-11-13T12:00:00.000Z')).forBoard(1);
 });
 afterEach(() => temp.cleanup());
 
@@ -40,7 +40,7 @@ describe('taskRepository', () => {
 
   it('atualiza título, cor e conteúdo preservando o resto', () => {
     const task = repo.create({ title: 'A' });
-    const later = createTaskRepository(temp.db, fixedNow('2026-11-14T08:00:00.000Z'));
+    const later = createTaskStore(temp.db, fixedNow('2026-11-14T08:00:00.000Z')).forBoard(1);
     const content = { type: 'doc' as const, content: [{ type: 'taskList', content: [{ type: 'taskItem', attrs: { checked: true }, content: [{ type: 'paragraph' }] }] }] };
     const updated = later.update(task.id, { title: 'A2', content });
     expect(updated).toMatchObject({ title: 'A2', color: 'amarelo', content, createdAt: task.createdAt, updatedAt: '2026-11-14T08:00:00.000Z' });
@@ -267,7 +267,86 @@ describe('taskRepository', () => {
 
   it('persiste entre conexões (reiniciar o servidor)', () => {
     repo.create({ title: 'Persistente' });
-    const again = createTaskRepository(temp.reopen(), fixedNow('2026-11-13T12:00:00.000Z'));
+    const again = createTaskStore(temp.reopen(), fixedNow('2026-11-13T12:00:00.000Z')).forBoard(1);
     expect(again.list().map((t) => t.title)).toEqual(['Persistente']);
+  });
+});
+
+describe('TaskStore: tarefas por quadro', () => {
+  const NOW = '2026-11-18T12:00:00.000Z';
+  const newBoard = () =>
+    Number(
+      temp.db
+        .prepare("INSERT INTO boards (name, kind, owner_user_id, created_at) VALUES ('Grupo', 'group', NULL, ?)")
+        .run(NOW).lastInsertRowid,
+    );
+  const version = (boardId: number) =>
+    (temp.db.prepare('SELECT version FROM boards WHERE id = ?').get(boardId) as { version: number }).version;
+
+  it('cada quadro só enxerga as próprias tarefas, e a tarefa diz a que quadro pertence', () => {
+    const store = createTaskStore(temp.db, fixedNow(NOW));
+    const other = newBoard();
+    const a = store.forBoard(1).create({ title: 'Legado' });
+    const b = store.forBoard(other).create({ title: 'Grupo' });
+    expect(a.boardId).toBe(1);
+    expect(b.boardId).toBe(other);
+    expect(store.forBoard(1).list().map((t) => t.title)).toEqual(['Legado']);
+    expect(store.forBoard(other).list().map((t) => t.title)).toEqual(['Grupo']);
+    expect(store.boardOf(b.id)).toBe(other);
+    expect(store.boardOf(9999)).toBeNull();
+  });
+
+  it('tarefa de outro quadro não existe aqui: get, update e remove não acham, move dá NOT_FOUND', () => {
+    const store = createTaskStore(temp.db, fixedNow(NOW));
+    const other = newBoard();
+    const foreign = store.forBoard(other).create({ title: 'Alheia' });
+    const mine = store.forBoard(1);
+    expect(mine.get(foreign.id)).toBeNull();
+    expect(mine.update(foreign.id, { title: 'Invadida' })).toBeNull();
+    expect(mine.remove(foreign.id)).toBe(false);
+    expect(() => mine.move(foreign.id, { kind: 'cell', day: 0, slot: 0 })).toThrow(MoveError);
+    expect(store.forBoard(other).get(foreign.id)?.title).toBe('Alheia');
+  });
+
+  it('a mesma célula vale em quadros diferentes, e o deck de cada quadro tem a própria ordem', () => {
+    const store = createTaskStore(temp.db, fixedNow(NOW));
+    const other = newBoard();
+    store.forBoard(1).create({ title: 'A', position: { kind: 'cell', day: 0, slot: 0 } });
+    expect(() => store.forBoard(other).create({ title: 'B', position: { kind: 'cell', day: 0, slot: 0 } })).not.toThrow();
+    expect(store.forBoard(other).create({ title: 'C' }).deckOrder).toBe(0);
+  });
+
+  it('created_by registra quem criou', () => {
+    const user = Number(
+      temp.db
+        .prepare(
+          "INSERT INTO users (google_sub, email, display_name, username, seq, created_at, last_seen_at) VALUES ('s', 's@example.com', 'S', 'sss', 1, ?, ?)",
+        )
+        .run(NOW, NOW).lastInsertRowid,
+    );
+    const task = createTaskStore(temp.db, fixedNow(NOW)).forBoard(1, user).create({ title: 'Minha' });
+    expect(temp.db.prepare('SELECT created_by FROM tasks WHERE id = ?').get(task.id)).toEqual({ created_by: user });
+  });
+
+  it('a versão do quadro sobe a cada mudança real e não sobe quando nada muda', () => {
+    const store = createTaskStore(temp.db, fixedNow(NOW));
+    const board = store.forBoard(1);
+    const start = version(1);
+    const a = board.create({ title: 'A' });
+    expect(version(1)).toBe(start + 1);
+    board.move(a.id, { kind: 'deck' });
+    expect(version(1)).toBe(start + 1);
+    board.move(a.id, { kind: 'cell', day: 1, slot: 1 });
+    expect(version(1)).toBe(start + 2);
+    board.update(a.id, { title: 'A2' });
+    expect(version(1)).toBe(start + 3);
+    board.reset();
+    expect(version(1)).toBe(start + 4);
+    board.reset();
+    expect(version(1)).toBe(start + 4);
+    expect(board.remove(9999)).toBe(false);
+    expect(version(1)).toBe(start + 4);
+    board.remove(a.id);
+    expect(version(1)).toBe(start + 5);
   });
 });

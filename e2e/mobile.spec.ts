@@ -37,11 +37,7 @@ test('tarefa com duração vira uma linha "05:00 – 20:00" e as faixas cobertas
   page,
   request,
 }) => {
-  const response = await request.post('/api/tasks', {
-    headers: { 'X-Quadro-Client': '1' },
-    data: { title: 'Plantão', span: 30, position: { kind: 'cell', day: 0, slot: 0 } },
-  });
-  expect(response.status()).toBe(201);
+  await createTask(request, { title: 'Plantão', span: 30, position: { kind: 'cell', day: 0, slot: 0 } });
 
   await page.goto('/');
   await page.getByRole('group', { name: 'Visualização' }).getByRole('button', { name: 'Dia completo' }).click();

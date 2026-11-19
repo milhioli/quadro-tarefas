@@ -1,6 +1,6 @@
 import type { Task } from '@quadro/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createTestApp, type TestApp } from '../../test/helpers/testApp';
+import { TEST_ORIGIN, createTestApp, type TestApp } from '../../test/helpers/testApp';
 
 let t: TestApp;
 beforeEach(async () => {
@@ -9,14 +9,14 @@ beforeEach(async () => {
 afterEach(async () => t.close());
 
 async function create(title: string, extra: Record<string, unknown> = {}): Promise<Task> {
-  const res = await t.request('POST', '/api/tasks', { title, ...extra });
+  const res = await t.request('POST', '/api/boards/1/tasks', { title, ...extra });
   expect(res.statusCode).toBe(201);
   return res.json() as Task;
 }
 
 describe('rotas de tarefas', () => {
   it('lista vazia no início', async () => {
-    const res = await t.request('GET', '/api/tasks');
+    const res = await t.request('GET', '/api/boards/1/tasks');
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ tasks: [] });
   });
@@ -49,10 +49,10 @@ describe('rotas de tarefas', () => {
     ['conteúdo profundo demais', { title: 'a', content: deep(40) }],
     ['chave de posição na criação', { title: 'a', day: 0 }],
   ])('POST rejeita %s com 400', async (_label, body) => {
-    const res = await t.request('POST', '/api/tasks', body);
+    const res = await t.request('POST', '/api/boards/1/tasks', body);
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ error: { code: 'VALIDATION' } });
-    expect((await t.request('GET', '/api/tasks')).json()).toEqual({ tasks: [] });
+    expect((await t.request('GET', '/api/boards/1/tasks')).json()).toEqual({ tasks: [] });
   });
 
   it('PATCH rejeita chaves extras e corpo vazio', async () => {
@@ -71,8 +71,8 @@ describe('rotas de tarefas', () => {
   it('JSON malformado dá 400 sem detalhes internos', async () => {
     const res = await t.raw({
       method: 'POST',
-      url: '/api/tasks',
-      headers: { host: '127.0.0.1:3001', 'x-quadro-client': '1', 'content-type': 'application/json' },
+      url: '/api/boards/1/tasks',
+      headers: { host: '127.0.0.1:3001', origin: TEST_ORIGIN, cookie: t.cookie, 'x-quadro-client': '1', 'content-type': 'application/json' },
       payload: '{"title":',
     });
     expect(res.statusCode).toBe(400);
@@ -80,7 +80,7 @@ describe('rotas de tarefas', () => {
   });
 
   it('corpo acima de 256 KiB dá 413', async () => {
-    const res = await t.request('POST', '/api/tasks', { title: 'a', content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'x'.repeat(300 * 1024) }] }] } });
+    const res = await t.request('POST', '/api/boards/1/tasks', { title: 'a', content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'x'.repeat(300 * 1024) }] }] } });
     expect(res.statusCode).toBe(413);
     expect(res.json()).toMatchObject({ error: { code: 'PAYLOAD_TOO_LARGE' } });
   });
@@ -88,8 +88,8 @@ describe('rotas de tarefas', () => {
   it('text/plain dá 415', async () => {
     const res = await t.raw({
       method: 'POST',
-      url: '/api/tasks',
-      headers: { host: '127.0.0.1:3001', 'x-quadro-client': '1', 'content-type': 'text/plain' },
+      url: '/api/boards/1/tasks',
+      headers: { host: '127.0.0.1:3001', origin: TEST_ORIGIN, cookie: t.cookie, 'x-quadro-client': '1', 'content-type': 'text/plain' },
       payload: '{"title":"a"}',
     });
     expect(res.statusCode).toBe(415);
@@ -98,8 +98,8 @@ describe('rotas de tarefas', () => {
   it('prototype poisoning no corpo dá 400', async () => {
     const res = await t.raw({
       method: 'POST',
-      url: '/api/tasks',
-      headers: { host: '127.0.0.1:3001', 'x-quadro-client': '1', 'content-type': 'application/json' },
+      url: '/api/boards/1/tasks',
+      headers: { host: '127.0.0.1:3001', origin: TEST_ORIGIN, cookie: t.cookie, 'x-quadro-client': '1', 'content-type': 'application/json' },
       payload: '{"title":"a","__proto__":{"x":1}}',
     });
     expect(res.statusCode).toBe(400);
@@ -107,17 +107,17 @@ describe('rotas de tarefas', () => {
 });
 
 describe('position em POST e PATCH', () => {
-  const list = async () => ((await t.request('GET', '/api/tasks')).json() as { tasks: Task[] }).tasks;
+  const list = async () => ((await t.request('GET', '/api/boards/1/tasks')).json() as { tasks: Task[] }).tasks;
 
   it('POST com célula livre cria já agendada', async () => {
-    const res = await t.request('POST', '/api/tasks', { title: 'Academia', position: { kind: 'cell', day: 1, slot: 4 } });
+    const res = await t.request('POST', '/api/boards/1/tasks', { title: 'Academia', position: { kind: 'cell', day: 1, slot: 4 } });
     expect(res.statusCode).toBe(201);
     expect(res.json()).toMatchObject({ title: 'Academia', day: 1, slot: 4, deckOrder: null });
   });
 
   it('POST em célula ocupada dá 409 e não cria a tarefa', async () => {
     await create('A', { position: { kind: 'cell', day: 0, slot: 0 } });
-    const res = await t.request('POST', '/api/tasks', { title: 'B', position: { kind: 'cell', day: 0, slot: 0 } });
+    const res = await t.request('POST', '/api/boards/1/tasks', { title: 'B', position: { kind: 'cell', day: 0, slot: 0 } });
     expect(res.statusCode).toBe(409);
     expect(res.json()).toEqual({ error: { code: 'CONFLICT', message: 'Esse horário já está ocupado' } });
     expect((await list()).map((x) => x.title)).toEqual(['A']);
@@ -153,7 +153,7 @@ describe('position em POST e PATCH', () => {
     { kind: 'deck', slot: 1 },
     'deck',
   ])('position inválida %j dá 400 em POST e PATCH', async (position) => {
-    const post = await t.request('POST', '/api/tasks', { title: 'x', position });
+    const post = await t.request('POST', '/api/boards/1/tasks', { title: 'x', position });
     expect(post.statusCode).toBe(400);
     const a = await create('A');
     const patch = await t.request('PATCH', `/api/tasks/${a.id}`, { position });
@@ -173,10 +173,10 @@ describe('position em POST e PATCH', () => {
 
 describe('span (duração) em POST, PATCH e PUT position', () => {
   it('POST com span 30 a partir das 05:00 cria a faixa 05:00 – 20:00', async () => {
-    const res = await t.request('POST', '/api/tasks', { title: 'Plantão', span: 30, position: { kind: 'cell', day: 0, slot: 0 } });
+    const res = await t.request('POST', '/api/boards/1/tasks', { title: 'Plantão', span: 30, position: { kind: 'cell', day: 0, slot: 0 } });
     expect(res.statusCode).toBe(201);
     expect(res.json()).toMatchObject({ title: 'Plantão', span: 30, day: 0, slot: 0 });
-    expect(((await t.request('GET', '/api/tasks')).json() as { tasks: Task[] }).tasks[0]?.span).toBe(30);
+    expect(((await t.request('GET', '/api/boards/1/tasks')).json() as { tasks: Task[] }).tasks[0]?.span).toBe(30);
   });
 
   it('toda tarefa responde com span, 1 por padrão', async () => {
@@ -184,7 +184,7 @@ describe('span (duração) em POST, PATCH e PUT position', () => {
   });
 
   it.each([0, 35, 1.5, '2', null])('span inválido %j dá 400 em POST e PATCH', async (span) => {
-    const post = await t.request('POST', '/api/tasks', { title: 'x', span });
+    const post = await t.request('POST', '/api/boards/1/tasks', { title: 'x', span });
     expect(post.statusCode).toBe(400);
     expect(post.json()).toMatchObject({ error: { code: 'VALIDATION' } });
     const a = await create('A');
@@ -209,13 +209,13 @@ describe('span (duração) em POST, PATCH e PUT position', () => {
     const res = await t.request('PATCH', `/api/tasks/${a.id}`, { span: 3 });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toEqual({ error: { code: 'VALIDATION', message: 'A tarefa não cabe até 22:00' } });
-    const post = await t.request('POST', '/api/tasks', { title: 'B', span: 5, position: { kind: 'cell', day: 0, slot: 30 } });
+    const post = await t.request('POST', '/api/boards/1/tasks', { title: 'B', span: 5, position: { kind: 'cell', day: 0, slot: 30 } });
     expect(post.statusCode).toBe(400);
   });
 
   it('tarefas adjacentes não conflitam', async () => {
     await create('A', { span: 2, position: { kind: 'cell', day: 3, slot: 0 } });
-    const res = await t.request('POST', '/api/tasks', { title: 'B', position: { kind: 'cell', day: 3, slot: 2 } });
+    const res = await t.request('POST', '/api/boards/1/tasks', { title: 'B', position: { kind: 'cell', day: 3, slot: 2 } });
     expect(res.statusCode).toBe(201);
   });
 
@@ -291,6 +291,45 @@ describe('PUT /api/tasks/:id/position', () => {
     await t.request('DELETE', `/api/tasks/${a.id}`);
     const res = await move(b.id, { kind: 'cell', day: 0, slot: 0 });
     expect(where(res.json().tasks)).toEqual({ B: '0:0' });
+  });
+});
+
+describe('tarefas de outro quadro (IDOR)', () => {
+  it('nenhuma rota de tarefa alcança a tarefa de um quadro de que a pessoa não é membro: tudo 404', async () => {
+    const ana = await t.signIn('ana@example.com', { username: 'ana', displayName: 'Ana' });
+    const mine = (await ana.request('POST', `/api/boards/${ana.boardId}/tasks`, { title: 'Da Ana' })).json() as Task;
+
+    // O admin (t) é o intruso aqui: ser admin não dá acesso a quadros alheios.
+    const attempts = [
+      t.request('GET', `/api/tasks/${mine.id}`),
+      t.request('PATCH', `/api/tasks/${mine.id}`, { title: 'Invadida' }),
+      t.request('PUT', `/api/tasks/${mine.id}/position`, { to: { kind: 'cell', day: 0, slot: 0 } }),
+      t.request('DELETE', `/api/tasks/${mine.id}`),
+      t.request('GET', `/api/boards/${ana.boardId}/tasks`),
+      t.request('POST', `/api/boards/${ana.boardId}/tasks`, { title: 'Intrusa' }),
+      t.request('POST', `/api/boards/${ana.boardId}/reset`),
+    ];
+    for (const res of await Promise.all(attempts)) {
+      expect(res.statusCode).toBe(404);
+    }
+    const after = (await ana.request('GET', `/api/tasks/${mine.id}`)).json() as Task;
+    expect(after).toMatchObject({ title: 'Da Ana', boardId: ana.boardId, day: null });
+    expect(((await ana.request('GET', `/api/boards/${ana.boardId}/tasks`)).json() as { tasks: Task[] }).tasks).toHaveLength(1);
+  });
+
+  it('a resposta para "não existe" e "não é seu" é a mesma', async () => {
+    const ana = await t.signIn('ana@example.com', { username: 'ana', displayName: 'Ana' });
+    const mine = (await ana.request('POST', `/api/boards/${ana.boardId}/tasks`, { title: 'Da Ana' })).json() as Task;
+    const notMine = await t.request('GET', `/api/tasks/${mine.id}`);
+    const missing = await t.request('GET', '/api/tasks/99999');
+    expect(notMine.statusCode).toBe(missing.statusCode);
+    expect(notMine.json()).toEqual(missing.json());
+  });
+
+  it('a tarefa criada leva o quadro e quem criou', async () => {
+    const created = await create('Minha');
+    expect(created.boardId).toBe(t.boardId);
+    expect(t.temp.db.prepare('SELECT created_by FROM tasks WHERE id = ?').get(created.id)).toEqual({ created_by: t.userId });
   });
 });
 

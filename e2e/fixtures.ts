@@ -1,7 +1,21 @@
-import { expect, test as base, type APIRequestContext, type Locator, type Page } from '@playwright/test';
+import {
+  expect,
+  test as base,
+  type APIRequestContext,
+  type Browser,
+  type BrowserContext,
+  type Locator,
+  type Page,
+  type TestInfo,
+} from '@playwright/test';
+import { BASE_URL } from './ports';
 
-/** Header obrigatório em toda mutação (mesmo valor de CLIENT_HEADER em @quadro/shared). */
-export const CLIENT_HEADERS = Object.freeze({ 'X-Quadro-Client': '1' });
+/**
+ * Headers obrigatórios em toda mutação pela API: o do cliente (mesmo valor de
+ * CLIENT_HEADER em @quadro/shared) e o Origin, que o navegador manda sozinho
+ * mas o request do Playwright não.
+ */
+export const CLIENT_HEADERS = Object.freeze({ 'X-Quadro-Client': '1', Origin: BASE_URL });
 
 export const DAY_NAMES = Object.freeze(['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'] as const);
 
@@ -10,9 +24,28 @@ export interface ApiTask {
   title: string;
   day: number | null;
   slot: number | null;
+  span: number;
+  boardId: number;
 }
 
 export type CellPosition = { kind: 'cell'; day: number; slot: number };
+
+/** Conta de teste logada (login de desenvolvimento do `npm run dev:e2e`). */
+export interface E2eAccount {
+  email: string;
+  userId: number;
+  handle: string;
+  displayName: string;
+  /** Quadro pessoal: cada teste tem o seu, então começa vazio. */
+  boardId: number;
+}
+
+export interface E2eProfile {
+  username: string;
+  displayName: string;
+}
+
+export const DEFAULT_PROFILE: E2eProfile = Object.freeze({ username: 'teste.e2e', displayName: 'Teste E2E' });
 
 /** "05:00 – 05:30" para o slot 0 (travessão U+2013), como em shared/src/slots.ts. */
 export function slotLabel(slot: number): string {
@@ -26,27 +59,59 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-export async function listTasks(request: APIRequestContext): Promise<ApiTask[]> {
-  const response = await request.get('/api/tasks');
+/**
+ * E-mail único por teste, repetição e pessoa. O login de teste só aceita
+ * `@example.com`, e a conta nova garante um quadro pessoal vazio.
+ */
+export function accountEmail(testInfo: TestInfo, label = 'a'): string {
+  return `e2e-${label}-${testInfo.testId}-${testInfo.repeatEachIndex}-${testInfo.retry}@example.com`.toLowerCase();
+}
+
+/** Entra pelo login de teste e cria o perfil. O `request` guarda o cookie da sessão. */
+export async function signIn(
+  request: APIRequestContext,
+  email: string,
+  profile: E2eProfile = DEFAULT_PROFILE,
+): Promise<E2eAccount> {
+  const login = await request.post('/api/auth/dev/login', { headers: CLIENT_HEADERS, data: { email } });
+  expect(login.status(), 'login de teste').toBe(200);
+  let me = (await login.json()) as { user: { id: number; handle: string; displayName: string; personalBoardId: number } | null };
+  if (!me.user) {
+    const created = await request.post('/api/me/profile', { headers: CLIENT_HEADERS, data: profile });
+    expect(created.status(), 'perfil de teste').toBe(200);
+    me = (await created.json()) as typeof me;
+  }
+  const user = me.user;
+  if (!user) throw new Error('perfil de teste sem usuário');
+  return { email, userId: user.id, handle: user.handle, displayName: user.displayName, boardId: user.personalBoardId };
+}
+
+async function personalBoardId(request: APIRequestContext): Promise<number> {
+  const response = await request.get('/api/me');
+  expect(response.status()).toBe(200);
+  const me = (await response.json()) as { user: { personalBoardId: number } | null };
+  if (!me.user) throw new Error('sem sessão: use a fixture `account`');
+  return me.user.personalBoardId;
+}
+
+/** Tarefas de um quadro (padrão: o pessoal de quem está logado). */
+export async function listTasks(request: APIRequestContext, boardId?: number): Promise<ApiTask[]> {
+  const board = boardId ?? (await personalBoardId(request));
+  const response = await request.get(`/api/boards/${board}/tasks`);
   expect(response.status()).toBe(200);
   return ((await response.json()) as { tasks: ApiTask[] }).tasks;
 }
 
+/** Cria pela API pública (sem rota "só para teste"), no quadro pessoal por padrão. */
 export async function createTask(
   request: APIRequestContext,
-  input: { title: string; position?: CellPosition },
+  input: { title: string; position?: CellPosition; span?: number },
+  boardId?: number,
 ): Promise<ApiTask> {
-  const response = await request.post('/api/tasks', { headers: CLIENT_HEADERS, data: input });
+  const board = boardId ?? (await personalBoardId(request));
+  const response = await request.post(`/api/boards/${board}/tasks`, { headers: CLIENT_HEADERS, data: input });
   expect(response.status()).toBe(201);
   return (await response.json()) as ApiTask;
-}
-
-/** O banco do E2E é temporário: cada teste começa com ele vazio. */
-export async function deleteAllTasks(request: APIRequestContext): Promise<void> {
-  for (const task of await listTasks(request)) {
-    const response = await request.delete(`/api/tasks/${task.id}`, { headers: CLIENT_HEADERS });
-    expect(response.status()).toBe(204);
-  }
 }
 
 export function boardRegion(page: Page): Locator {
@@ -71,6 +136,11 @@ export function taskCard(scope: Page | Locator, title: string): Locator {
 /** Aviso do App (o dnd-kit também cria um role="status", por isso a classe). */
 export function notice(page: Page): Locator {
   return page.locator('.notice');
+}
+
+/** Seletor do quadro aberto, na barra da sessão. */
+export function boardSelect(page: Page): Locator {
+  return page.getByRole('combobox', { name: 'Quadro' });
 }
 
 async function centerOf(locator: Locator): Promise<{ x: number; y: number }> {
@@ -106,28 +176,60 @@ export function httpStatusConsoleError(status: number): RegExp {
   return new RegExp(`status of ${status}\\b`);
 }
 
+/** Junta os erros de console e de página de uma aba. */
+export function collectConsoleErrors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+  return errors;
+}
+
+/** Outra pessoa, num navegador separado (contexto com cookies próprios), já logada. */
+export interface OtherPerson {
+  context: BrowserContext;
+  page: Page;
+  account: E2eAccount;
+  consoleErrors: string[];
+}
+
+export async function openAs(browser: Browser, testInfo: TestInfo, label: string, profile: E2eProfile): Promise<OtherPerson> {
+  const project = testInfo.project.use;
+  const context = await browser.newContext({
+    baseURL: BASE_URL,
+    locale: project.locale,
+    timezoneId: project.timezoneId,
+    viewport: project.viewport,
+  });
+  const account = await signIn(context.request, accountEmail(testInfo, label), profile);
+  const page = await context.newPage();
+  return { context, page, account, consoleErrors: collectConsoleErrors(page) };
+}
+
 /**
- * Fixtures automáticas de todo teste:
- * - começa com o banco vazio;
+ * Fixtures de todo teste:
+ * - `request` é o da página: a sessão (cookie) é a mesma do navegador;
+ * - `account` entra com uma conta nova (e-mail único), então o quadro pessoal
+ *   começa vazio. `test.use({ loggedIn: false })` começa sem sessão;
  * - falha se aparecer erro no console ou erro não tratado na página (inclui CSP e React),
  *   a não ser os que o teste declarou com `consoleErrors.allow(...)`.
  */
-export const test = base.extend<{ cleanDatabase: void; consoleErrors: ConsoleWatch }>({
-  cleanDatabase: [
-    async ({ request }, use) => {
-      await deleteAllTasks(request);
-      await use();
+export const test = base.extend<{ loggedIn: boolean; account: E2eAccount | null; consoleErrors: ConsoleWatch }>({
+  loggedIn: [true, { option: true }],
+  request: async ({ page }, use) => {
+    await use(page.request);
+  },
+  account: [
+    async ({ loggedIn, request }, use, testInfo) => {
+      await use(loggedIn ? await signIn(request, accountEmail(testInfo)) : null);
     },
     { auto: true },
   ],
   consoleErrors: [
     async ({ page }, use) => {
-      const errors: string[] = [];
+      const errors = collectConsoleErrors(page);
       const allowed: RegExp[] = [];
-      page.on('console', (message) => {
-        if (message.type() === 'error') errors.push(message.text());
-      });
-      page.on('pageerror', (error) => errors.push(error.message));
       await use({ allow: (pattern) => void allowed.push(pattern) });
       const unexpected = errors.filter((text) => !allowed.some((pattern) => pattern.test(text)));
       expect(unexpected, 'erros no console do navegador').toEqual([]);

@@ -18,9 +18,13 @@ export function isAllowedHost(host: string | undefined, options: GuardOptions): 
   return options.allowedHostnames.includes(hostname) && options.allowedPorts.includes(Number(port));
 }
 
-/** Origin ausente é aceito (navegação/curl); presente, precisa ser exatamente uma das permitidas. */
-export function isAllowedOrigin(origin: unknown, options: GuardOptions): boolean {
-  if (origin === undefined) return true;
+/**
+ * Origin presente precisa ser exatamente uma das permitidas. Ausente só é
+ * aceito quando não é obrigatório: em GET/HEAD (navegação, inclusive a volta
+ * do login do Google, que chega sem Origin). Em mutação, a ausência é 403.
+ */
+export function isAllowedOrigin(origin: unknown, options: GuardOptions, required = false): boolean {
+  if (origin === undefined) return !required;
   return typeof origin === 'string' && options.allowedOrigins.includes(origin);
 }
 
@@ -36,12 +40,15 @@ export function isSafeMethod(method: string): boolean {
  * Hook onRequest na raiz da aplicação (vale para todas as rotas, inclusive 404):
  * - Host fora da lista → 403 (anti DNS rebinding);
  * - Origin estranho ou "null" → 403;
- * - qualquer método fora de GET/HEAD (inclusive OPTIONS) sem X-Quadro-Client: 1 → 403.
+ * - qualquer método fora de GET/HEAD (inclusive OPTIONS) sem Origin permitido
+ *   ou sem X-Quadro-Client: 1 → 403. Com sessão por cookie, essas duas
+ *   checagens (mais o SameSite) são a defesa contra CSRF.
  */
 export function registerGuard(app: FastifyInstance, options: GuardOptions): void {
   app.addHook('onRequest', async (request) => {
     if (!isAllowedHost(request.headers.host, options)) throw forbidden();
-    if (!isAllowedOrigin(request.headers.origin, options)) throw forbidden();
-    if (!isSafeMethod(request.method) && !hasClientHeader(request)) throw forbidden();
+    const unsafe = !isSafeMethod(request.method);
+    if (!isAllowedOrigin(request.headers.origin, options, unsafe)) throw forbidden();
+    if (unsafe && !hasClientHeader(request)) throw forbidden();
   });
 }

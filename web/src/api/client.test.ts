@@ -12,6 +12,7 @@ const task: Task = {
   slot: null,
   span: 1,
   deckOrder: 0,
+  boardId: 1,
   createdAt: '2026-11-13T12:00:00.000Z',
   updatedAt: '2026-11-13T12:00:00.000Z',
 };
@@ -38,11 +39,11 @@ function recorder(respond: (call: Call) => Response | Promise<Response>) {
 const headersOf = (call: Call | undefined) => (call?.init.headers ?? {}) as Record<string, string>;
 
 describe('createApiClient', () => {
-  it('listTasks faz GET sem corpo, sem Content-Type e sem o header de mutação', async () => {
+  it('listTasks faz GET no quadro, sem corpo, sem Content-Type e sem o header de mutação', async () => {
     const { calls, fetch } = recorder(() => json({ tasks: [task] }));
-    const tasks = await createApiClient({ fetch }).listTasks();
+    const tasks = await createApiClient({ fetch }).listTasks(1);
     expect(tasks).toEqual([task]);
-    expect(calls[0]?.url).toBe('/api/tasks');
+    expect(calls[0]?.url).toBe('/api/boards/1/tasks');
     expect(calls[0]?.init.method).toBe('GET');
     expect(calls[0]?.init.body).toBeUndefined();
     expect(headersOf(calls[0])).toEqual({ Accept: 'application/json' });
@@ -50,10 +51,11 @@ describe('createApiClient', () => {
     expect(calls[0]?.init.cache).toBe('no-store');
   });
 
-  it('createTask faz POST com JSON e X-Quadro-Client', async () => {
+  it('createTask faz POST no quadro com JSON e X-Quadro-Client', async () => {
     const { calls, fetch } = recorder(() => json(task, 201));
-    const created = await createApiClient({ fetch }).createTask({ title: 'Estudar', color: 'azul' });
+    const created = await createApiClient({ fetch }).createTask(7, { title: 'Estudar', color: 'azul' });
     expect(created).toEqual(task);
+    expect(calls[0]?.url).toBe('/api/boards/7/tasks');
     expect(calls[0]?.init.method).toBe('POST');
     expect(calls[0]?.init.body).toBe(JSON.stringify({ title: 'Estudar', color: 'azul' }));
     expect(headersOf(calls[0])).toEqual({
@@ -89,10 +91,10 @@ describe('createApiClient', () => {
     expect(calls[0]?.init.body).toBe(JSON.stringify({ to: { kind: 'cell', day: 1, slot: 2 } }));
   });
 
-  it('resetBoard faz POST sem corpo nem Content-Type', async () => {
+  it('resetBoard faz POST no quadro, sem corpo nem Content-Type', async () => {
     const { calls, fetch } = recorder(() => json({ tasks: [], moved: 0 }));
-    await expect(createApiClient({ fetch }).resetBoard()).resolves.toEqual({ tasks: [], moved: 0 });
-    expect(calls[0]?.url).toBe('/api/board/reset');
+    await expect(createApiClient({ fetch }).resetBoard(3)).resolves.toEqual({ tasks: [], moved: 0 });
+    expect(calls[0]?.url).toBe('/api/boards/3/reset');
     expect(calls[0]?.init.body).toBeUndefined();
     expect(headersOf(calls[0])).toEqual({ Accept: 'application/json', 'X-Quadro-Client': '1' });
   });
@@ -121,8 +123,8 @@ describe('createApiClient', () => {
 
   it('usa o baseUrl', async () => {
     const { calls, fetch } = recorder(() => json({ tasks: [] }));
-    await createApiClient({ fetch, baseUrl: 'http://127.0.0.1:3001' }).listTasks();
-    expect(calls[0]?.url).toBe('http://127.0.0.1:3001/api/tasks');
+    await createApiClient({ fetch, baseUrl: 'http://127.0.0.1:3001' }).listTasks(1);
+    expect(calls[0]?.url).toBe('http://127.0.0.1:3001/api/boards/1/tasks');
   });
 
   it('rejeita id inválido sem chamar a rede', async () => {
@@ -130,8 +132,79 @@ describe('createApiClient', () => {
     const api = createApiClient({ fetch });
     for (const id of [0, -1, 1.5, Number.NaN]) {
       await expect(api.deleteTask(id)).rejects.toMatchObject({ code: 'VALIDATION' });
+      await expect(api.listTasks(id)).rejects.toMatchObject({ code: 'VALIDATION' });
+      await expect(api.acceptInvite(id)).rejects.toMatchObject({ code: 'VALIDATION' });
+      await expect(api.removeMember(1, id)).rejects.toMatchObject({ code: 'VALIDATION' });
     }
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('conta, quadros e convites', () => {
+  const ME = { user: { id: 1, handle: 'ana_01', displayName: 'Ana', role: 'user', personalBoardId: 2 }, pendingProfile: null };
+  const BOARD = { id: 9, name: 'Equipe', kind: 'group', role: 'owner' };
+  const MEMBER = { userId: 4, handle: 'bia_02', displayName: 'Bia', role: 'editor', status: 'invited' };
+  const READ_HEADERS = { Accept: 'application/json' };
+  const MUTATION_HEADERS = { Accept: 'application/json', 'X-Quadro-Client': '1' };
+  const JSON_MUTATION_HEADERS = { ...MUTATION_HEADERS, 'Content-Type': 'application/json' };
+
+  type Api = ReturnType<typeof createApiClient>;
+  type Case = [string, (api: Api) => Promise<unknown>, unknown, string, string, unknown, Record<string, string>];
+  const cases: Case[] = [
+    ['getMe', (api) => api.getMe(), ME, 'GET', '/api/me', undefined, READ_HEADERS],
+    ['getAuthMethods', (api) => api.getAuthMethods(), { google: true, dev: false }, 'GET', '/api/auth/methods', undefined, READ_HEADERS],
+    ['devLogin', (api) => api.devLogin('ana@example.com'), ME, 'POST', '/api/auth/dev/login', { email: 'ana@example.com' }, JSON_MUTATION_HEADERS],
+    [
+      'createProfile',
+      (api) => api.createProfile({ username: 'ana', displayName: 'Ana' }),
+      ME,
+      'POST',
+      '/api/me/profile',
+      { username: 'ana', displayName: 'Ana' },
+      JSON_MUTATION_HEADERS,
+    ],
+    ['listBoards', (api) => api.listBoards(), { boards: [BOARD] }, 'GET', '/api/boards', undefined, READ_HEADERS],
+    ['createBoard', (api) => api.createBoard('Equipe'), BOARD, 'POST', '/api/boards', { name: 'Equipe' }, JSON_MUTATION_HEADERS],
+    ['renameBoard', (api) => api.renameBoard(9, 'Time'), BOARD, 'PATCH', '/api/boards/9', { name: 'Time' }, JSON_MUTATION_HEADERS],
+    ['listMembers', (api) => api.listMembers(9), { members: [MEMBER] }, 'GET', '/api/boards/9/members', undefined, READ_HEADERS],
+    ['inviteMember', (api) => api.inviteMember(9, 'bia_02'), MEMBER, 'POST', '/api/boards/9/invites', { handle: 'bia_02' }, JSON_MUTATION_HEADERS],
+    ['listInvites', (api) => api.listInvites(), { invites: [] }, 'GET', '/api/invites', undefined, READ_HEADERS],
+    ['acceptInvite', (api) => api.acceptInvite(9), BOARD, 'POST', '/api/invites/9/accept', undefined, MUTATION_HEADERS],
+  ];
+
+  it.each(cases)('%s chama a rota certa', async (_name, call, response, method, url, body, headers) => {
+    const { calls, fetch } = recorder(() => json(response));
+    await call(createApiClient({ fetch }));
+    expect(calls[0]?.init.method).toBe(method);
+    expect(calls[0]?.url).toBe(url);
+    expect(calls[0]?.init.body).toBe(body === undefined ? undefined : JSON.stringify(body));
+    expect(headersOf(calls[0])).toEqual(headers);
+  });
+
+  it('as listas devolvem só o array', async () => {
+    const boards = recorder(() => json({ boards: [BOARD] }));
+    await expect(createApiClient({ fetch: boards.fetch }).listBoards()).resolves.toEqual([BOARD]);
+    const members = recorder(() => json({ members: [MEMBER] }));
+    await expect(createApiClient({ fetch: members.fetch }).listMembers(9)).resolves.toEqual([MEMBER]);
+  });
+
+  it.each<[string, (api: Api) => Promise<void>, string, string]>([
+    ['logout', (api) => api.logout(), 'POST', '/api/auth/logout'],
+    ['deleteBoard', (api) => api.deleteBoard(9), 'DELETE', '/api/boards/9'],
+    ['removeMember', (api) => api.removeMember(9, 4), 'DELETE', '/api/boards/9/members/4'],
+    ['declineInvite', (api) => api.declineInvite(9), 'POST', '/api/invites/9/decline'],
+  ])('%s vai sem corpo nem Content-Type e aceita 204', async (_name, call, method, url) => {
+    const { calls, fetch } = recorder(() => new Response(null, { status: 204 }));
+    await expect(call(createApiClient({ fetch }))).resolves.toBeUndefined();
+    expect(calls[0]?.init.method).toBe(method);
+    expect(calls[0]?.url).toBe(url);
+    expect(calls[0]?.init.body).toBeUndefined();
+    expect(headersOf(calls[0])).toEqual(MUTATION_HEADERS);
+  });
+
+  it('401 vira ApiError UNAUTHENTICATED', async () => {
+    const { fetch } = recorder(() => json({ error: { code: 'UNAUTHENTICATED', message: 'Entre para continuar' } }, 401));
+    await expect(createApiClient({ fetch }).listBoards()).rejects.toMatchObject({ status: 401, code: 'UNAUTHENTICATED' });
   });
 });
 
@@ -150,7 +223,7 @@ describe('erros', () => {
       ),
     );
     const error = await createApiClient({ fetch })
-      .createTask({ title: '' })
+      .createTask(1, { title: '' })
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({
@@ -163,7 +236,7 @@ describe('erros', () => {
 
   it('resposta de erro fora do formato vira UNKNOWN com mensagem genérica', async () => {
     const { fetch } = recorder(() => new Response('<html>502</html>', { status: 502 }));
-    await expect(createApiClient({ fetch }).listTasks()).rejects.toMatchObject({
+    await expect(createApiClient({ fetch }).listTasks(1)).rejects.toMatchObject({
       status: 502,
       code: 'UNKNOWN',
       message: UNKNOWN_MESSAGE,
@@ -174,7 +247,7 @@ describe('erros', () => {
     const fetch: FetchLike = async () => {
       throw new TypeError('fetch failed');
     };
-    await expect(createApiClient({ fetch }).listTasks()).rejects.toMatchObject({
+    await expect(createApiClient({ fetch }).listTasks(1)).rejects.toMatchObject({
       status: 0,
       code: 'NETWORK',
       message: NETWORK_MESSAGE,
@@ -183,7 +256,7 @@ describe('erros', () => {
 
   it('resposta 200 sem corpo é inválida', async () => {
     const { fetch } = recorder(() => new Response('', { status: 200 }));
-    await expect(createApiClient({ fetch }).listTasks()).rejects.toMatchObject({ code: 'UNKNOWN' });
+    await expect(createApiClient({ fetch }).listTasks(1)).rejects.toMatchObject({ code: 'UNKNOWN' });
   });
 });
 

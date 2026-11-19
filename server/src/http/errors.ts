@@ -19,6 +19,9 @@ export class HttpError extends Error {
 
 export const notFound = (message = 'Tarefa não encontrada'): HttpError => new HttpError(404, 'NOT_FOUND', message);
 export const forbidden = (): HttpError => new HttpError(403, 'FORBIDDEN', 'Acesso negado');
+export const unauthenticated = (): HttpError => new HttpError(401, 'UNAUTHENTICATED', 'Entre para continuar');
+export const needsUsername = (): HttpError =>
+  new HttpError(403, 'NEEDS_USERNAME', 'Escolha um nome de usuário para continuar');
 export const conflict = (message = 'Esse horário já está ocupado'): HttpError =>
   new HttpError(409, 'CONFLICT', message);
 

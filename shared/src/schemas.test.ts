@@ -6,8 +6,19 @@ import {
   calendarWeekQuerySchema,
   createTaskSchema,
   isMondayIsoDate,
+  boardIdParamsSchema,
+  boardNameSchema,
+  devLoginSchema,
+  displayNameSchema,
+  formatHandle,
+  handleSchema,
+  inviteInputSchema,
+  memberParamsSchema,
   moveBodySchema,
+  parseHandle,
+  profileInputSchema,
   spanSchema,
+  usernameSchema,
   taskIdParamsSchema,
   updateTaskSchema,
 } from './schemas';
@@ -103,6 +114,60 @@ describe('span (duração) em criação e edição', () => {
     expect(spanSchema.safeParse(0).error?.issues[0]?.message).toBe('A duração mínima é de 30 minutos');
     expect(spanSchema.safeParse(35).error?.issues[0]?.message).toBe('A duração máxima vai de 05:00 a 22:00');
     expect(spanSchema.safeParse(1.5).error?.issues[0]?.message).toBe('Duração inválida');
+  });
+});
+
+describe('contas: nome de usuário, nome de exibição e handle', () => {
+  it('nome de usuário: 3 a 20 de [a-z0-9._], em minúsculas e sem reservados', () => {
+    expect(usernameSchema.parse('  Ana.Souza_1 ')).toBe('ana.souza_1');
+    for (const bad of ['ab', 'a'.repeat(21), 'ana souza', 'ana-souza', 'ãna', 'admin', 'Suporte', '']) {
+      expect(usernameSchema.safeParse(bad).success, bad).toBe(false);
+    }
+    expect(usernameSchema.safeParse('admin').error?.issues[0]?.message).toBe('Esse nome de usuário é reservado');
+  });
+
+  it('nome de exibição e nome de quadro recusam controles e caracteres de direção', () => {
+    expect(displayNameSchema.parse('  Ana Souza ')).toBe('Ana Souza');
+    expect(displayNameSchema.parse('José Ñandú 🙂')).toBe('José Ñandú 🙂');
+    for (const bad of ['', '   ', 'a'.repeat(41), 'Ana‮axe', 'Ana​', 'Ana\u0007', 'Ana⁦x']) {
+      expect(displayNameSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    }
+    expect(boardNameSchema.parse('Equipe 🚀')).toBe('Equipe 🚀');
+    expect(boardNameSchema.safeParse('x'.repeat(61)).success).toBe(false);
+    expect(boardNameSchema.safeParse('Time‮').success).toBe(false);
+  });
+
+  it('formatHandle e parseHandle usam a forma canônica (2 dígitos no mínimo)', () => {
+    expect(formatHandle('ana', 0)).toBe('ana_00');
+    expect(formatHandle('ana', 7)).toBe('ana_07');
+    expect(formatHandle('ana', 100)).toBe('ana_100');
+    expect(parseHandle('ana_07')).toEqual({ username: 'ana', seq: 7 });
+    expect(parseHandle(' ANA_00 ')).toEqual({ username: 'ana', seq: 0 });
+    expect(parseHandle('ana_b_12')).toEqual({ username: 'ana_b', seq: 12 });
+    expect(parseHandle('ana_100')).toEqual({ username: 'ana', seq: 100 });
+    for (const bad of ['ana_7', 'ana_007', 'ana', 'ana_', '_07', 'an_07', 'ana-07']) {
+      expect(parseHandle(bad), bad).toBeNull();
+    }
+    expect(handleSchema.parse('ana_07')).toEqual({ username: 'ana', seq: 7 });
+    expect(handleSchema.safeParse('ana_7').success).toBe(false);
+  });
+
+  it('entradas de perfil, quadro e convite são estritas', () => {
+    expect(profileInputSchema.parse({ username: 'ana', displayName: 'Ana' })).toEqual({ username: 'ana', displayName: 'Ana' });
+    expect(profileInputSchema.safeParse({ username: 'ana', displayName: 'Ana', role: 'admin' }).success).toBe(false);
+    expect(profileInputSchema.safeParse({ username: 'ana', displayName: 'Ana', seq: 0 }).success).toBe(false);
+    expect(inviteInputSchema.parse({ handle: 'bia_01' })).toEqual({ handle: { username: 'bia', seq: 1 } });
+    expect(boardIdParamsSchema.parse({ boardId: '12' })).toEqual({ boardId: 12 });
+    expect(boardIdParamsSchema.safeParse({ boardId: '012' }).success).toBe(false);
+    expect(memberParamsSchema.parse({ boardId: '1', userId: '2' })).toEqual({ boardId: 1, userId: 2 });
+  });
+
+  it('login de desenvolvimento aceita só e-mails @example.com e nada além do e-mail', () => {
+    expect(devLoginSchema.parse({ email: ' Admin@Example.com ' })).toEqual({ email: 'admin@example.com' });
+    for (const email of ['ana@gmail.com', 'ana@example.com.br', 'ana@sub.example.com', 'example.com', '@example.com']) {
+      expect(devLoginSchema.safeParse({ email }).success, email).toBe(false);
+    }
+    expect(devLoginSchema.safeParse({ email: 'a@example.com', role: 'admin' }).success).toBe(false);
   });
 });
 

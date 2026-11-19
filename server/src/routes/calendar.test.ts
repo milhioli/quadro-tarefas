@@ -23,7 +23,7 @@ const get = (app: TestApp, url: string, headers: Record<string, string> = {}) =>
   app.raw({
     method: 'GET',
     url,
-    headers: { host: '127.0.0.1:3001', 'x-quadro-client': '1', ...headers },
+    headers: { host: '127.0.0.1:3001', 'x-quadro-client': '1', cookie: app.cookie, ...headers },
   } as InjectOptions);
 
 function enabled(getWeek: CalendarService['getWeek']): () => CalendarService {
@@ -47,10 +47,40 @@ describe('GET /api/calendar/events', () => {
     expect(getWeek).toHaveBeenCalledWith('2026-11-16');
   });
 
+  it('quem não é admin recebe enabled:false, sem nenhuma chamada à Apple (a credencial é do dono do .env)', async () => {
+    const getWeek = vi.fn(async () => [EVENT]);
+    t = await createTestApp({ calendar: enabled(getWeek) });
+    const ana = await t.signIn('ana@example.com', { username: 'ana', displayName: 'Ana' });
+    const res = await t.raw({
+      method: 'GET',
+      url: '/api/calendar/events?week=2026-11-16',
+      headers: { host: '127.0.0.1:3001', 'x-quadro-client': '1', cookie: ana.cookie },
+    } as InjectOptions);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ enabled: false, events: [] });
+    expect(getWeek).not.toHaveBeenCalled();
+  });
+
+  it('sem sessão, 401 e nenhuma chamada à Apple', async () => {
+    const getWeek = vi.fn(async () => [EVENT]);
+    t = await createTestApp({ calendar: enabled(getWeek), signInAsAdmin: false });
+    const res = await t.raw({
+      method: 'GET',
+      url: '/api/calendar/events?week=2026-11-16',
+      headers: { host: '127.0.0.1:3001', 'x-quadro-client': '1' },
+    } as InjectOptions);
+    expect(res.statusCode).toBe(401);
+    expect(getWeek).not.toHaveBeenCalled();
+  });
+
   it('exige X-Quadro-Client mesmo sendo GET', async () => {
     const getWeek = vi.fn(async () => [EVENT]);
     t = await createTestApp({ calendar: enabled(getWeek) });
-    const res = await t.raw({ method: 'GET', url: '/api/calendar/events?week=2026-11-16', headers: { host: '127.0.0.1:3001' } });
+    const res = await t.raw({
+      method: 'GET',
+      url: '/api/calendar/events?week=2026-11-16',
+      headers: { host: '127.0.0.1:3001', cookie: t.cookie },
+    });
     expect(res.statusCode).toBe(403);
     expect(getWeek).not.toHaveBeenCalled();
   });

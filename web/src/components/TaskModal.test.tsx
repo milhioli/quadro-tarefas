@@ -54,7 +54,8 @@ const daySelect = () => screen.getByRole('combobox', { name: 'Dia' });
 const slotSelect = () => screen.getByRole('combobox', { name: 'Horário' });
 const endSelect = () => screen.getByRole('combobox', { name: 'Até' });
 const createArgs = (api: ReturnType<typeof createFakeApi>) =>
-  api.calls.filter((c) => c.method === 'createTask').map((c) => c.args[0]);
+  // args = [boardId, input]
+  api.calls.filter((c) => c.method === 'createTask').map((c) => c.args[1]);
 
 describe('TaskModal — criação', () => {
   it('abre como "Nova tarefa" com o foco no título e sem horário', () => {

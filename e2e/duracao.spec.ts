@@ -20,16 +20,11 @@ async function createSpanTask(
   slot: number,
   span: number,
 ): Promise<ApiTask> {
-  const response = await request.post('/api/tasks', {
-    headers: { 'X-Quadro-Client': '1' },
-    data: { title, span, position: { kind: 'cell', day, slot } },
-  });
-  expect(response.status()).toBe(201);
-  return (await response.json()) as ApiTask;
+  return createTask(request, { title, span, position: { kind: 'cell', day, slot } });
 }
 
 const byTitle = async (request: Parameters<typeof listTasks>[0], title: string) =>
-  (await listTasks(request)).find((task) => task.title === title) as (ApiTask & { span: number }) | undefined;
+  (await listTasks(request)).find((task) => task.title === title);
 
 test('cria uma tarefa das 05:00 às 20:00 pelo "Até" e ela ocupa a coluna até as 20:00', async ({ page, request }) => {
   await page.goto('/');

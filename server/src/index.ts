@@ -3,10 +3,13 @@ import { normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance, FastifyServerOptions } from 'fastify';
 import { buildApp } from './app';
+import { AuthConfigError, loadAuthConfig, type GoogleOffReason } from './auth/config';
+import { createGoogleProvider } from './auth/googleProvider';
 import { createCaldavClient } from './calendar/caldavClient';
 import { createCalendarService } from './calendar/calendarService';
 import { loadCalendarConfig, type CalendarOffReason, type MutableEnv } from './calendar/config';
-import { createGuardedFetch } from './calendar/guardedFetch';
+import { createGuardedFetch, type OidcFetch } from './calendar/guardedFetch';
+import { systemNow } from './clock';
 import { API_HOST, guardOptionsFor, loadConfig, type Env } from './config';
 import { openDatabase } from './db/connection';
 import { migrate } from './db/migrations';
@@ -22,7 +25,14 @@ export interface MainOptions {
   logger?: FastifyServerOptions['logger'];
   /** Linha de comando (padrão: process.argv). A agenda só liga com --agenda. */
   argv?: readonly string[];
+  /** Saída de rede do login Google. Padrão: `createOidcFetch()`. Os testes passam uma falsa (nenhum teste fala com o Google). */
+  oidcFetch?: OidcFetch;
 }
+
+const GOOGLE_OFF_MESSAGES: Record<GoogleOffReason, string> = {
+  'not-configured': 'Login Google: desligado (faltam GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no .env)',
+  'tls-disabled': 'Login Google desligado: verificação de TLS desativada no ambiente (NODE_TLS_REJECT_UNAUTHORIZED=0)',
+};
 
 const CALENDAR_OFF_MESSAGES: Partial<Record<CalendarOffReason, string>> = {
   'no-credentials': 'Agenda da Apple: --agenda sem ICLOUD_APPLE_ID/ICLOUD_APP_PASSWORD; seguindo sem agenda',
@@ -36,15 +46,33 @@ export async function main(options: MainOptions = {}): Promise<FastifyInstance> 
   }
   const env = options.env ?? process.env;
   const config = loadConfig(env, { dbPath: DEFAULT_DB_PATH });
+  // Lê e apaga o segredo do Google do ambiente.
+  const authConfig = loadAuthConfig(env as MutableEnv, { webPort: config.webPort });
+  const guard = guardOptionsFor(config);
+  if (!guard.allowedOrigins.includes(authConfig.appOrigin.origin)) {
+    throw new AuthConfigError('APP_ORIGIN precisa ser uma das origens aceitas pelo guard');
+  }
   // Lê e apaga a credencial do ambiente; só liga com --agenda na linha de comando.
   const calendarConfig = loadCalendarConfig(env as MutableEnv, options.argv ?? process.argv);
   const db = openDatabase(config.dbPath);
   migrate(db);
 
+  const google = authConfig.google
+    ? createGoogleProvider({
+        google: authConfig.google,
+        now: systemNow,
+        fetch: options.oidcFetch,
+        // Só o tipo da falha: nunca URL, corpo nem mensagem da biblioteca.
+        onDiscoveryError: (kind) => app.log.warn({ kind, status: 'discovery' }, 'Login Google indisponível: o discovery falhou'),
+      })
+    : null;
+
   const app = buildApp({
     db,
     logger: options.logger ?? { level: 'info' },
-    guard: guardOptionsFor(config),
+    guard,
+    // Servidor normal: sem login de desenvolvimento (ele só existe no entrypoint de E2E).
+    auth: { appOrigin: authConfig.appOrigin, adminEmail: authConfig.adminEmail, identity: google, devLogin: false },
     calendar:
       calendarConfig.status === 'on'
         ? (log) =>
@@ -57,6 +85,13 @@ export async function main(options: MainOptions = {}): Promise<FastifyInstance> 
             })
         : undefined,
   });
+  if (authConfig.googleOffReason) app.log.warn(GOOGLE_OFF_MESSAGES[authConfig.googleOffReason]);
+  // Discovery em segundo plano: uma falha não derruba o servidor, só deixa o login indisponível (e tenta de novo depois).
+  if (google) {
+    void google.init().then((ready) => {
+      if (ready) app.log.info('Login Google: pronto');
+    });
+  }
   if (calendarConfig.status === 'on') {
     app.log.info('Agenda da Apple: ligada (somente leitura)');
   } else {

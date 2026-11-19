@@ -1292,3 +1292,187 @@ select.input:disabled {
     max-width: none;
   }
 }
+
+/* ---------- Entrar e primeiro acesso ---------- */
+
+.auth-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px 16px;
+}
+
+.auth-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 440px;
+  padding: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 8%);
+}
+
+.auth-card__lead {
+  margin: 0;
+}
+
+.auth-card__muted {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.auth-card .field__sublabel,
+.group-form .field__sublabel {
+  margin: 0;
+}
+
+a.button {
+  display: inline-block;
+  text-align: center;
+  text-decoration: none;
+}
+
+.auth-card__google {
+  min-height: 44px;
+  line-height: 26px;
+}
+
+.auth-card__dev {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+}
+
+.auth-card__actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---------- Barra da sessão (quadro aberto e conta) ---------- */
+
+.session-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 8px 24px;
+  background: var(--surface-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.board-picker,
+.session-bar__account {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.board-picker__label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.board-picker__select {
+  min-width: 180px;
+  max-width: 280px;
+}
+
+.session-bar__who {
+  overflow-wrap: anywhere;
+}
+
+.session-bar__name {
+  font-weight: 600;
+}
+
+.session-bar__handle,
+.member-list__handle {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.session-bar__error {
+  width: 100%;
+}
+
+/* ---------- Pessoas do grupo e convites ---------- */
+
+.member-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.member-list__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.member-list__who {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.member-list__name {
+  font-weight: 600;
+}
+
+.member-list__status {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.group-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.group-form .field {
+  flex: 1;
+  min-width: 200px;
+}
+
+.group-message {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 768px) {
+  .session-bar {
+    padding: 8px 16px;
+  }
+
+  .board-picker,
+  .session-bar__account {
+    width: 100%;
+  }
+
+  .board-picker__select {
+    flex: 1;
+    max-width: none;
+  }
+
+  .session-bar .button {
+    min-height: 44px;
+  }
+}

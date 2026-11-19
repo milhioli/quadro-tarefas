@@ -10,7 +10,27 @@ afterEach(() => {
 
 const T = '2026-11-13T12:00:00.000Z';
 
-function insert(db: TempDb['db'], values: { day: number | null; slot: number | null; deck: number | null; color?: string; title?: string; content?: string }) {
+type TaskValues = {
+  day: number | null;
+  slot: number | null;
+  deck: number | null;
+  color?: string;
+  title?: string;
+  content?: string;
+  board?: number;
+};
+
+/** Insere no schema atual (v3+), no quadro `board` (padrão: o legado, 1). */
+function insert(db: TempDb['db'], values: TaskValues) {
+  return db
+    .prepare(
+      'INSERT INTO tasks (board_id, title, color, content, day, slot, deck_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    )
+    .run(values.board ?? 1, values.title ?? 'T', values.color ?? 'azul', values.content ?? '{"type":"doc"}', values.day, values.slot, values.deck, T, T);
+}
+
+/** Insere num banco antigo (v1/v2), que ainda não tem board_id. */
+function insertLegacy(db: TempDb['db'], values: TaskValues) {
   return db
     .prepare('INSERT INTO tasks (title, color, content, day, slot, deck_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
     .run(values.title ?? 'T', values.color ?? 'azul', values.content ?? '{"type":"doc"}', values.day, values.slot, values.deck, T, T);
@@ -82,11 +102,11 @@ describe('migração 2: duração (span)', () => {
     temp = createTempDb({ migrate: false });
     migrate(temp.db, MIGRATIONS.slice(0, 1));
     expect(schemaVersion(temp.db)).toBe(1);
-    insert(temp.db, { day: null, slot: null, deck: 0 });
-    insert(temp.db, { day: 4, slot: 33, deck: null });
-    insert(temp.db, { day: 0, slot: 0, deck: null });
+    insertLegacy(temp.db, { day: null, slot: null, deck: 0 });
+    insertLegacy(temp.db, { day: 4, slot: 33, deck: null });
+    insertLegacy(temp.db, { day: 0, slot: 0, deck: null });
 
-    expect(migrate(temp.db)).toBe(2);
+    expect(migrate(temp.db, MIGRATIONS.slice(0, 2))).toBe(2);
     expect(schemaVersion(temp.db)).toBe(2);
     expect(spans(temp.db)).toEqual([1, 1, 1]);
   });
@@ -117,5 +137,106 @@ describe('migração 2: duração (span)', () => {
     // Outro dia e faixas adjacentes são aceitos.
     expect(() => insert(temp!.db, { day: 1, slot: 2, deck: null })).not.toThrow();
     expect(spans(temp.db)).toEqual([3, 1, 1]);
+  });
+});
+
+describe('migração 3: contas, quadros e membros', () => {
+  const NOW = '2026-11-18T12:00:00.000Z';
+
+  function addUser(db: TempDb['db'], sub: string, extra: { username?: string; seq?: number; role?: string } = {}) {
+    const hasProfile = extra.username !== undefined;
+    return Number(
+      db
+        .prepare(
+          `INSERT INTO users (google_sub, email, display_name, username, seq, role, created_at, last_seen_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(sub, `${sub}@example.com`, hasProfile ? 'Nome' : null, extra.username ?? null, extra.seq ?? null, extra.role ?? 'user', NOW, NOW)
+        .lastInsertRowid,
+    );
+  }
+
+  function addBoard(db: TempDb['db'], kind: 'personal' | 'group', owner: number | null) {
+    return Number(
+      db
+        .prepare('INSERT INTO boards (name, kind, owner_user_id, created_at) VALUES (?, ?, ?, ?)')
+        .run('Quadro', kind, owner, NOW).lastInsertRowid,
+    );
+  }
+
+  it('converte um banco v2 com dados: tudo vai para o quadro 1, pessoal e sem dono, com os mesmos ids', () => {
+    temp = createTempDb({ migrate: false });
+    migrate(temp.db, MIGRATIONS.slice(0, 2));
+    insertLegacy(temp.db, { day: null, slot: null, deck: 0, title: 'Deck' });
+    insertLegacy(temp.db, { day: 2, slot: 4, deck: null, title: 'Quadro' });
+    const deleted = insertLegacy(temp.db, { day: null, slot: null, deck: 1, title: 'Apagada' }).lastInsertRowid;
+    temp.db.prepare('DELETE FROM tasks WHERE id = ?').run(deleted);
+
+    expect(migrate(temp.db)).toBe(3);
+    const tasks = temp.db.prepare('SELECT id, board_id, title, created_by FROM tasks ORDER BY id').all();
+    expect(tasks).toEqual([
+      { id: 1, board_id: 1, title: 'Deck', created_by: null },
+      { id: 2, board_id: 1, title: 'Quadro', created_by: null },
+    ]);
+    expect(temp.db.prepare('SELECT id, kind, owner_user_id, version FROM boards').all()).toEqual([
+      { id: 1, kind: 'personal', owner_user_id: null, version: 0 },
+    ]);
+    expect(temp.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    // O id apagado (3) não é reutilizado.
+    expect(Number(insert(temp.db, { day: null, slot: null, deck: 2 }).lastInsertRowid)).toBe(4);
+    expect(temp.db.prepare("SELECT value FROM counters WHERE name = 'next_user_seq'").get()).toEqual({ value: 1 });
+  });
+
+  it('a célula e a sobreposição são por quadro; a tarefa não muda de quadro; apagar o quadro apaga as tarefas', () => {
+    temp = createTempDb();
+    const other = addBoard(temp.db, 'group', null);
+    insert(temp.db, { day: 0, slot: 0, deck: null, board: 1 });
+    expect(() => insert(temp!.db, { day: 0, slot: 0, deck: null, board: other })).not.toThrow();
+    expect(() => insert(temp!.db, { day: 0, slot: 0, deck: null, board: 1 })).toThrow(/Faixa de horário sobreposta/);
+    const moved = insert(temp.db, { day: null, slot: null, deck: 0, board: 1 }).lastInsertRowid;
+    expect(() => temp!.db.prepare('UPDATE tasks SET board_id = ? WHERE id = ?').run(other, moved)).toThrow(
+      /não muda de quadro/,
+    );
+    temp.db.prepare('DELETE FROM boards WHERE id = ?').run(other);
+    expect(temp.db.prepare('SELECT COUNT(*) AS n FROM tasks WHERE board_id = ?').get(other)).toEqual({ n: 0 });
+    expect(() => insert(temp!.db, { day: null, slot: null, deck: 5, board: 999 })).toThrow(/FOREIGN KEY/);
+  });
+
+  it('usuários: perfil completo ou nenhum, seq único e admin só com seq 0', () => {
+    temp = createTempDb();
+    addUser(temp.db, 'pendente');
+    addUser(temp.db, 'admin', { username: 'ana', seq: 0, role: 'admin' });
+    expect(() => addUser(temp!.db, 'outro', { username: 'bia', seq: 0 })).toThrow(/UNIQUE/);
+    expect(() => addUser(temp!.db, 'falso', { username: 'cid', seq: 3, role: 'admin' })).toThrow(/constraint/i);
+    expect(() => addUser(temp!.db, 'mal', { username: 'Maiúscula', seq: 4 })).toThrow(/constraint/i);
+    expect(() =>
+      temp!.db
+        .prepare('INSERT INTO users (google_sub, email, username, seq, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run('sem-nome', 'x@example.com', 'dan', 5, NOW, NOW),
+    ).toThrow(/constraint/i);
+    expect(() => addUser(temp!.db, 'admin')).toThrow(/UNIQUE/);
+  });
+
+  it('membros: um owner por quadro, owner sempre ativo e o quadro pessoal não aceita membros', () => {
+    temp = createTempDb();
+    const ana = addUser(temp.db, 'ana', { username: 'ana', seq: 1 });
+    const bia = addUser(temp.db, 'bia', { username: 'bia', seq: 2 });
+    const personal = addBoard(temp.db, 'personal', ana);
+    const group = addBoard(temp.db, 'group', null);
+    const member = temp.db.prepare(
+      'INSERT INTO board_members (board_id, user_id, role, status, invited_by, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    );
+    member.run(personal, ana, 'owner', 'active', null, NOW);
+    expect(() => member.run(personal, bia, 'editor', 'invited', ana, NOW)).toThrow(/não aceita membros/);
+    member.run(group, ana, 'owner', 'active', null, NOW);
+    expect(() => member.run(group, bia, 'owner', 'active', null, NOW)).toThrow(/UNIQUE/);
+    expect(() => member.run(group, bia, 'editor', 'pending', ana, NOW)).toThrow(/constraint/i);
+    member.run(group, bia, 'editor', 'invited', ana, NOW);
+    expect(() => addBoard(temp!.db, 'personal', ana)).toThrow(/UNIQUE/);
+    expect(() => addBoard(temp!.db, 'group', ana)).toThrow(/constraint/i);
+    // Apagar a conta leva o quadro pessoal (cascata) e os vínculos.
+    temp.db.prepare('DELETE FROM users WHERE id = ?').run(ana);
+    expect(temp.db.prepare('SELECT COUNT(*) AS n FROM boards WHERE id = ?').get(personal)).toEqual({ n: 0 });
+    expect(temp.db.prepare('SELECT invited_by FROM board_members WHERE user_id = ?').get(bia)).toEqual({ invited_by: null });
   });
 });
