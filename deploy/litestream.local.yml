@@ -1,0 +1,15 @@
+# Litestream 0.5 no teste local: réplica em arquivo, no próprio volume de dados
+# (o usuário do contêiner é o mesmo uid do app). Nunca use isto na VPS: o backup
+# ficaria no mesmo disco do banco.
+#
+# Retenção curta (1 h) de propósito: no teste humano, confira que a poda apaga
+# de fato os arquivos antigos. O Litestream recusa retenção menor que o intervalo.
+snapshot:
+  interval: 30m
+  retention: 1h
+
+dbs:
+  - path: /data/quadro.sqlite
+    replica:
+      type: file
+      path: /data/replica/quadro

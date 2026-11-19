@@ -10,13 +10,17 @@ import { createCalendarService } from './calendar/calendarService';
 import { loadCalendarConfig, type CalendarOffReason, type MutableEnv } from './calendar/config';
 import { createGuardedFetch, type OidcFetch } from './calendar/guardedFetch';
 import { systemNow } from './clock';
-import { API_HOST, guardOptionsFor, loadConfig, type Env } from './config';
+import { API_HOST, guardOptionsFor, loadConfig, publicGuardOptions, type Env } from './config';
 import { openDatabase } from './db/connection';
 import { migrate } from './db/migrations';
+import { resolveDeployMode } from './deployMode';
+import { loadWebDist } from './http/webDist';
 
 /** Raiz do repositório (server/src/ → ../../). */
 export const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 export const DEFAULT_DB_PATH = resolve(REPO_ROOT, 'server', 'data', 'quadro.sqlite');
+/** Build do web (`npm run build`), servido pelo Fastify no deploy. */
+export const WEB_DIST_DIR = resolve(REPO_ROOT, 'web', 'dist');
 
 export interface MainOptions {
   env?: Env;
@@ -27,6 +31,8 @@ export interface MainOptions {
   argv?: readonly string[];
   /** Saída de rede do login Google. Padrão: `createOidcFetch()`. Os testes passam uma falsa (nenhum teste fala com o Google). */
   oidcFetch?: OidcFetch;
+  /** Pasta do build do web no modo público. Padrão: WEB_DIST_DIR (os testes passam uma temporária). */
+  webDistDir?: string;
 }
 
 const GOOGLE_OFF_MESSAGES: Record<GoogleOffReason, string> = {
@@ -48,12 +54,17 @@ export async function main(options: MainOptions = {}): Promise<FastifyInstance> 
   const config = loadConfig(env, { dbPath: DEFAULT_DB_PATH });
   // Lê e apaga o segredo do Google do ambiente.
   const authConfig = loadAuthConfig(env as MutableEnv, { webPort: config.webPort });
-  const guard = guardOptionsFor(config);
+  const argv = options.argv ?? process.argv;
+  // Antes do loadCalendarConfig: em produção, ICLOUD_* no ambiente é recusado.
+  const mode = resolveDeployMode(env, argv, authConfig);
+  const guard = mode === 'public' ? publicGuardOptions(authConfig.appOrigin) : guardOptionsFor(config);
   if (!guard.allowedOrigins.includes(authConfig.appOrigin.origin)) {
     throw new AuthConfigError('APP_ORIGIN precisa ser uma das origens aceitas pelo guard');
   }
   // Lê e apaga a credencial do ambiente; só liga com --agenda na linha de comando.
-  const calendarConfig = loadCalendarConfig(env as MutableEnv, options.argv ?? process.argv);
+  const calendarConfig = loadCalendarConfig(env as MutableEnv, argv);
+  // No deploy, o próprio Fastify serve o web (com a CSP do HTML). Sem o build, não sobe.
+  const webDist = mode === 'public' ? loadWebDist(options.webDistDir ?? WEB_DIST_DIR) : undefined;
   const db = openDatabase(config.dbPath);
   migrate(db);
 
@@ -71,8 +82,13 @@ export async function main(options: MainOptions = {}): Promise<FastifyInstance> 
     db,
     logger: options.logger ?? { level: 'info' },
     guard,
+    webDist,
+    behindProxy: mode === 'public',
+    taskLimits: { maxDbBytes: config.dbMaxMb * 1024 * 1024 },
+    retention: true,
     // Servidor normal: sem login de desenvolvimento (ele só existe no entrypoint de E2E).
     auth: { appOrigin: authConfig.appOrigin, adminEmail: authConfig.adminEmail, identity: google, devLogin: false },
+    info: { contactEmail: authConfig.contactEmail, operatorName: authConfig.operatorName },
     calendar:
       calendarConfig.status === 'on'
         ? (log) =>
@@ -85,6 +101,7 @@ export async function main(options: MainOptions = {}): Promise<FastifyInstance> 
             })
         : undefined,
   });
+  if (mode === 'public') app.log.info('Modo público (deploy): só o Host e o Origin do APP_ORIGIN');
   if (authConfig.googleOffReason) app.log.warn(GOOGLE_OFF_MESSAGES[authConfig.googleOffReason]);
   // Discovery em segundo plano: uma falha não derruba o servidor, só deixa o login indisponível (e tenta de novo depois).
   if (google) {

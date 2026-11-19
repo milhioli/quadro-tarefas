@@ -1,6 +1,17 @@
 import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
-import { HttpError, conflict, errorBody, forbidden, notFound, registerErrorHandling, toErrorResponse } from './errors';
+import {
+  HttpError,
+  LimitReachedError,
+  StorageFullError,
+  conflict,
+  errorBody,
+  forbidden,
+  notFound,
+  registerErrorHandling,
+  toErrorResponse,
+  tooManyRequests,
+} from './errors';
 
 describe('toErrorResponse', () => {
   it('usa status, código e mensagem do HttpError', () => {
@@ -40,6 +51,23 @@ describe('toErrorResponse', () => {
       unexpected: false,
     });
     expect(errorBody('NOT_FOUND', 'x', [])).toEqual({ error: { code: 'NOT_FOUND', message: 'x' } });
+  });
+
+  it('limite de taxa (429), teto (409) e banco cheio (503) chegam com o próprio status', () => {
+    expect(toErrorResponse(tooManyRequests())).toEqual({
+      status: 429,
+      body: { error: { code: 'RATE_LIMITED', message: 'Muitas ações em pouco tempo. Espere alguns minutos e tente de novo.' } },
+      unexpected: false,
+    });
+    expect(toErrorResponse(new LimitReachedError('Chegou ao limite'))).toEqual({
+      status: 409,
+      body: { error: { code: 'CONFLICT', message: 'Chegou ao limite' } },
+      unexpected: false,
+    });
+    const full = toErrorResponse(new StorageFullError());
+    expect(full.status).toBe(503);
+    expect(full.body.error.code).toBe('STORAGE_FULL');
+    expect(full.unexpected).toBe(false);
   });
 });
 

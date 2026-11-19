@@ -2,6 +2,7 @@ import { displayNameSchema, usernameSchema } from '@quadro/shared';
 import { useId, useState, type FormEvent } from 'react';
 import { useCreateProfile, useLogout } from '../../api/account';
 import { describeError } from '../../api/client';
+import { AppFooter } from '../AppFooter';
 
 export interface ProfileScreenProps {
   /** Sugestão para o nome de exibição (o primeiro nome da conta Google). */
@@ -110,6 +111,7 @@ export function ProfileScreen({ suggestedName, onLoggedOut }: ProfileScreenProps
           </div>
         </form>
       </section>
+      <AppFooter />
     </main>
   );
 }

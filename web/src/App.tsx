@@ -79,9 +79,11 @@ export interface AppProps {
   clock: Clock;
   /** Barra acima do cabeçalho (quadro aberto, conta e Sair), vinda do Shell. */
   toolbar?: ReactNode;
+  /** Rodapé (privacidade e contato), depois da área principal, dentro do layout de altura fixa. */
+  footer?: ReactNode;
 }
 
-export function App({ clock, toolbar }: AppProps) {
+export function App({ clock, toolbar, footer }: AppProps) {
   const today = useToday(clock);
   // Celular: agenda por toque. Desktop: deck + quadro com arraste.
   const isMobile = useMediaQuery(MOBILE_QUERY);
@@ -245,6 +247,7 @@ export function App({ clock, toolbar }: AppProps) {
       </header>
 
       <main className={isMobile ? 'app-main app-main--mobile' : 'app-main'}>{content}</main>
+      {footer}
 
       {notice ? (
         <div className={`notice notice--${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>

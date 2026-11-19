@@ -3,7 +3,7 @@ import { nowIso, type Now } from '../clock';
 
 /**
  * Registro de auditoria: quem fez o quê, em que conta ou quadro. Nunca guarda
- * e-mail, handle buscado, título nem conteúdo. A leitura pelo admin é da 2b.
+ * e-mail, handle buscado, título nem conteúdo. A retenção apaga a linha aos 180 dias.
  */
 export type AuditAction =
   | 'login'
@@ -16,7 +16,12 @@ export type AuditAction =
   | 'invite.accept'
   | 'invite.decline'
   | 'member.remove'
-  | 'member.leave';
+  | 'member.leave'
+  | 'account.delete'
+  | 'board.transfer'
+  | 'user.disable'
+  | 'user.enable'
+  | 'admin.users.list';
 
 export interface AuditTarget {
   kind: 'user' | 'board';

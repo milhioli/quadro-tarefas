@@ -1,8 +1,9 @@
 import type {} from '@fastify/cookie';
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { Now } from '../clock';
 import { needsUsername, unauthenticated } from '../http/errors';
 import type { SessionRepository } from '../repositories/sessionRepository';
-import { SESSION_MAX_MS } from '../repositories/sessionRepository';
+import { SESSION_MAX_MS, SESSION_TOUCH_MS } from '../repositories/sessionRepository';
 import { hasProfile, isDevUser, type UserRecord, type UserRepository } from '../repositories/userRepository';
 
 declare module 'fastify' {
@@ -55,6 +56,8 @@ export interface SessionDeps {
   cookie: SessionCookie;
   /** Só no entrypoint de E2E: aceita contas `dev:`. No servidor normal, a sessão delas é ignorada (401). */
   allowDevUsers: boolean;
+  /** Para o último acesso da conta (renovado no máximo uma vez por hora). */
+  now: Now;
 }
 
 /**
@@ -73,8 +76,13 @@ export function registerSession(app: FastifyInstance, deps: SessionDeps): void {
     const userId = deps.sessions.resolve(token);
     if (userId === null) return;
     const user = deps.users.get(userId);
-    if (!user || user.status !== 'active') return;
+    // Conta que sumiu ou foi desativada: a sessão acaba aqui, não fica sendo renovada.
+    if (!user || user.status !== 'active') {
+      deps.sessions.delete(token);
+      return;
+    }
     if (isDevUser(user) && !deps.allowDevUsers) return;
+    if (deps.now().getTime() - Date.parse(user.lastSeenAt) >= SESSION_TOUCH_MS) deps.users.touch(user.id);
     request.user = user;
     request.sessionToken = token;
   });

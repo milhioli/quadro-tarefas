@@ -870,6 +870,83 @@ select.input:disabled {
   outline-offset: 4px;
 }
 
+/* ---------- Regras base do ProseMirror ----------
+ * Copiadas literalmente de @tiptap/core 3.34.0 (src/style.ts). O TipTap
+ * injetaria isso num <style>, que a CSP do HTML (style-src 'self') bloqueia:
+ * por isso o TaskEditor usa injectCSS: false. Ao atualizar o TipTap, confira
+ * o style.ts de novo. */
+.ProseMirror {
+  position: relative;
+}
+
+.ProseMirror {
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  white-space: break-spaces;
+  -webkit-font-variant-ligatures: none;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0; /* the above doesn't seem to work in Edge */
+}
+
+.ProseMirror [contenteditable="false"] {
+  white-space: normal;
+}
+
+.ProseMirror [contenteditable="false"] [contenteditable="true"] {
+  white-space: pre-wrap;
+}
+
+.ProseMirror pre {
+  white-space: pre-wrap;
+}
+
+img.ProseMirror-separator {
+  display: inline !important;
+  border: none !important;
+  margin: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.ProseMirror-gapcursor {
+  display: none;
+  pointer-events: none;
+  position: absolute;
+  margin: 0;
+}
+
+.ProseMirror-gapcursor:after {
+  content: "";
+  display: block;
+  position: absolute;
+  top: -2px;
+  width: 20px;
+  border-top: 1px solid black;
+  animation: ProseMirror-cursor-blink 1.1s steps(2, start) infinite;
+}
+
+@keyframes ProseMirror-cursor-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.ProseMirror-hideselection *::selection {
+  background: transparent;
+}
+
+.ProseMirror-hideselection *::-moz-selection {
+  background: transparent;
+}
+
+.ProseMirror-hideselection * {
+  caret-color: transparent;
+}
+
+.ProseMirror-focused .ProseMirror-gapcursor {
+  display: block;
+}
+
 /* ---------- Editor ---------- */
 
 .task-editor {
@@ -1297,6 +1374,8 @@ select.input:disabled {
 
 .auth-screen {
   display: flex;
+  flex-direction: column;
+  gap: 16px;
   align-items: center;
   justify-content: center;
   min-height: 100vh;
@@ -1475,4 +1554,107 @@ a.button {
   .session-bar .button {
     min-height: 44px;
   }
+}
+
+/* ---------- Rodapé, privacidade e conta (Fase 2b) ---------- */
+.app-footer {
+  flex: none;
+  padding: 6px 16px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.app-footer a {
+  color: inherit;
+}
+
+.auth-screen .app-footer {
+  border-top: none;
+}
+
+.auth-card__notice {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--primary-soft);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.legal-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  line-height: 1.6;
+}
+
+.legal-page h1 {
+  margin-bottom: 4px;
+}
+
+.legal-page h2 {
+  margin-top: 28px;
+  font-size: 1.1rem;
+}
+
+.legal-page__updated {
+  margin-top: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.legal-page__table {
+  overflow-x: auto;
+}
+
+.legal-page table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.legal-page caption {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 6px;
+}
+
+.legal-page th,
+.legal-page td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.delete-account__list {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  line-height: 1.5;
+}
+
+.delete-account__groups {
+  font-weight: 600;
+}
+
+.account-modal__danger {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.account-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.member-list__email {
+  color: var(--muted);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
 }

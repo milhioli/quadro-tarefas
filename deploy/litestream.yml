@@ -1,0 +1,20 @@
+# Litestream 0.5 na VPS: réplica contínua do banco num bucket S3 compatível
+# (Backblaze B2, Cloudflare R2 ou AWS S3). Ver docs/deploy.md.
+# - O bucket é privado, a chave vale só para ele (ou só para o prefixo) e as
+#   versões antigas expiram em até 2 dias (regra de ciclo de vida no provedor).
+# - As credenciais vêm de AWS_ACCESS_KEY_ID e AWS_SECRET_ACCESS_KEY, que só este
+#   contêiner recebe.
+# - Retenção de 7 dias: o que foi apagado some do backup em até ~10 dias
+#   (7 de retenção + o intervalo do snapshot + a expiração das versões no bucket).
+snapshot:
+  interval: 24h
+  retention: 168h
+
+dbs:
+  - path: /data/quadro.sqlite
+    replica:
+      type: s3
+      bucket: ${LITESTREAM_BUCKET}
+      path: ${LITESTREAM_PATH}
+      endpoint: ${LITESTREAM_ENDPOINT}
+      region: ${LITESTREAM_REGION}

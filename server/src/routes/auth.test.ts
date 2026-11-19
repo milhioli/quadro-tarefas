@@ -129,6 +129,8 @@ describe('sessão', () => {
     const ana = await t.signIn('ana@example.com', { username: 'ana', displayName: 'Ana' });
     t.temp.db.prepare("UPDATE users SET status = 'disabled' WHERE id = ?").run(ana.userId);
     expect((await ana.request('GET', '/api/boards/1/tasks')).statusCode).toBe(401);
+    // A sessão da conta desativada é apagada, não fica sendo renovada.
+    expect(t.temp.db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?').get(ana.userId)).toEqual({ n: 0 });
     const again = await devLogin(t, 'ana@example.com');
     expect(again.res.statusCode).toBe(403);
     expect(again.session).toBeUndefined();
@@ -408,12 +410,12 @@ describe('login Google: volta', () => {
     expectFailure((await callbackGoogle(t, `?code=c&state=${state}`, start.cookie)).res, 'indisponivel');
   });
 
-  it('conta desativada não entra', async () => {
+  it('conta desativada não entra, e a pessoa sabe por quê (login=desativada)', async () => {
     const fake = createFakeIdentity();
     t = await googleApp(fake);
     await googleLogin(t, fake);
     t.temp.db.prepare("UPDATE users SET status = 'disabled'").run();
-    expectFailure((await googleLogin(t, fake)).res);
+    expectFailure((await googleLogin(t, fake)).res, 'desativada');
   });
 
   it('a conta do e-mail do admin vira _00 com o quadro legado ao criar o perfil', async () => {
@@ -466,5 +468,187 @@ describe('login Google: log', () => {
       await app.close();
       temp.cleanup();
     }
+  });
+});
+
+describe('deploy (https): cookies __Host- com Secure', () => {
+  const PUBLIC = 'https://quadro.exemplo.com';
+  const PUBLIC_HOST = 'quadro.exemplo.com';
+
+  it('sessão: __Host-quadro_session com Secure, HttpOnly, Lax, Path=/ e sem Domain', async () => {
+    t = await createTestApp({ publicOrigin: PUBLIC, signInAsAdmin: false });
+    const res = await t.raw({
+      method: 'POST',
+      url: '/api/auth/dev/login',
+      headers: { host: PUBLIC_HOST, origin: PUBLIC, 'x-quadro-client': '1' },
+      payload: { email: 'ana@example.com' },
+    });
+    expect(res.statusCode).toBe(200);
+    const session = res.cookies.find((c) => c.name === '__Host-quadro_session');
+    expect(session).toMatchObject({ httpOnly: true, secure: true, sameSite: 'Lax', path: '/' });
+    expect(session?.domain).toBeUndefined();
+    expect(res.cookies.some((c) => c.name === SESSION_COOKIE)).toBe(false);
+  });
+
+  it('login Google: __Host-quadro_oauth com Path=/ e Secure, apagado na volta', async () => {
+    const fake = createFakeIdentity();
+    t = await createTestApp({ publicOrigin: PUBLIC, signInAsAdmin: false, auth: { identity: fake } });
+    const start = await t.raw({
+      method: 'GET',
+      url: '/api/auth/google/start',
+      headers: { host: PUBLIC_HOST, 'sec-fetch-site': 'same-origin' },
+    });
+    expect(start.statusCode).toBe(303);
+    expect(fake.begun[0]?.redirectUri).toBe(`${PUBLIC}/api/auth/google/callback`);
+    const oauth = start.cookies.find((c) => c.name === '__Host-quadro_oauth');
+    expect(oauth).toMatchObject({ httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 600 });
+    expect(oauth?.domain).toBeUndefined();
+    expect(start.cookies.some((c) => c.name === OAUTH_COOKIE)).toBe(false);
+
+    const state = fake.begun[0]?.checks.state ?? '';
+    const back = await t.raw({
+      method: 'GET',
+      url: `/api/auth/google/callback?code=c&state=${state}`,
+      headers: { host: PUBLIC_HOST, cookie: `__Host-quadro_oauth=${oauth?.value}` },
+    });
+    expect(back.statusCode).toBe(303);
+    expect(back.headers.location).toBe(`${PUBLIC}/`);
+    const cleared = back.cookies.find((c) => c.name === '__Host-quadro_oauth');
+    expect(cleared?.value).toBe('');
+    expect(cleared?.path).toBe('/');
+    expect(back.cookies.find((c) => c.name === '__Host-quadro_session' && c.value !== '')?.secure).toBe(true);
+  });
+
+  it('o cookie do local (quadro_session) não vale no deploy', async () => {
+    t = await createTestApp({ publicOrigin: PUBLIC });
+    expect(t.cookie.startsWith('__Host-quadro_session=')).toBe(true);
+    expect((await t.request('GET', '/api/boards')).statusCode).toBe(200);
+    const renamed = t.cookie.replace('__Host-quadro_session=', `${SESSION_COOKIE}=`);
+    const res = await t.raw({ method: 'GET', url: '/api/boards', headers: { host: PUBLIC_HOST, cookie: renamed } });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('login Google: limites contra contas em série', () => {
+  const RULE = { windowMs: 60_000 };
+
+  it('início: passou do limite por IP, volta com login=limite sem cookie e sem chamar o provedor', async () => {
+    const fake = createFakeIdentity();
+    t = await googleApp(fake, { rateLimits: { loginStart: { limit: 2, ...RULE } } });
+    for (let i = 0; i < 2; i++) expect((await startGoogle(t)).res.statusCode).toBe(303);
+    expect(fake.begun).toHaveLength(2);
+    const { res } = await startGoogle(t);
+    expectFailure(res, 'limite');
+    expect(res.cookies).toEqual([]);
+    expect(fake.begun).toHaveLength(2);
+  });
+
+  it('cadastro por IP: a segunda conta nova do mesmo IP não é criada; quem já tem conta entra', async () => {
+    const fake = createFakeIdentity(fakeClaims({ sub: 'google-sub-1' }));
+    t = await googleApp(fake, { rateLimits: { signupPerIp: { limit: 1, ...RULE } } });
+    expect((await googleLogin(t, fake)).session).toBeDefined();
+    expect(countUsers(t)).toBe(1);
+
+    fake.result = fakeClaims({ sub: 'google-sub-2', email: 'outra@example.com' });
+    expectFailure((await googleLogin(t, fake)).res, 'limite');
+    expect(countUsers(t)).toBe(1);
+
+    fake.result = fakeClaims({ sub: 'google-sub-1' });
+    expect((await googleLogin(t, fake)).session).toBeDefined();
+  });
+
+  it('cadastro global: passou do teto da hora, ninguém novo entra', async () => {
+    const fake = createFakeIdentity(fakeClaims({ sub: 'google-sub-1' }));
+    t = await googleApp(fake, { rateLimits: { signupGlobal: { limit: 1, ...RULE } } });
+    await googleLogin(t, fake);
+    fake.result = fakeClaims({ sub: 'google-sub-2', email: 'outra@example.com' });
+    expectFailure((await googleLogin(t, fake)).res, 'limite');
+    expect(countUsers(t)).toBe(1);
+  });
+
+  it('a mesma conta Google não recria a conta sem limite (corta o ciclo cadastrar e apagar)', async () => {
+    const fake = createFakeIdentity(fakeClaims({ sub: 'google-sub-ciclo' }));
+    t = await googleApp(fake, { rateLimits: { signupPerSub: { limit: 2, ...RULE } } });
+    for (let round = 0; round < 2; round++) {
+      expect((await googleLogin(t, fake)).session).toBeDefined();
+      t.temp.db.prepare('DELETE FROM users').run();
+    }
+    expectFailure((await googleLogin(t, fake)).res, 'limite');
+    expect(countUsers(t)).toBe(0);
+  });
+
+});
+
+describe('DELETE /api/me: apagar a própria conta', () => {
+  it('apaga a conta, limpa o cookie e derruba as outras sessões; o grupo passa ao membro mais antigo', async () => {
+    t = await createTestApp();
+    const ana = await t.signIn('ana@example.com', { username: 'ana', displayName: 'Ana' });
+    const bia = await t.signIn('bia@example.com', { username: 'bia', displayName: 'Bia' });
+    const group = (await ana.request('POST', '/api/boards', { name: 'Equipe' })).json() as { id: number };
+    await ana.request('POST', `/api/boards/${group.id}/invites`, { handle: bia.handle });
+    await bia.request('POST', `/api/invites/${group.id}/accept`);
+    const task = (await bia.request('POST', `/api/boards/${group.id}/tasks`, { title: 'Da Bia' })).json() as { id: number };
+    const otherSession = await t.signIn('ana@example.com');
+
+    const res = await ana.request('DELETE', '/api/me');
+    expect(res.statusCode).toBe(204);
+    const cleared = res.cookies.find((c) => c.name === SESSION_COOKIE);
+    expect(cleared?.value).toBe('');
+    expect((await otherSession.request('GET', '/api/boards')).statusCode).toBe(401);
+    expect((await ana.request('GET', '/api/me')).json()).toEqual({ user: null, pendingProfile: null });
+
+    const biaBoards = ((await bia.request('GET', '/api/boards')).json() as { boards: Array<{ id: number; role: string }> }).boards;
+    expect(biaBoards.find((b) => b.id === group.id)?.role).toBe('owner');
+    expect((await bia.request('GET', `/api/tasks/${task.id}`)).statusCode).toBe(200);
+    expect(countUsers(t)).toBe(2);
+  });
+
+  it('a auditoria registra a exclusão e a transferência, sem a pessoa como autora nem alvo', async () => {
+    t = await createTestApp({ signInAsAdmin: false });
+    const ana = await t.signIn('ana@example.com', { username: 'ana', displayName: 'Ana' });
+    await ana.request('DELETE', '/api/me');
+    const rows = t.temp.db.prepare('SELECT actor_user_id, action, target_id FROM audit_log ORDER BY id').all() as Array<{
+      actor_user_id: number | null;
+      action: string;
+      target_id: number | null;
+    }>;
+    expect(rows.at(-1)).toEqual({ actor_user_id: null, action: 'account.delete', target_id: null });
+    expect(rows.every((r) => r.actor_user_id === null && r.target_id === null)).toBe(true);
+  });
+
+  it('exige uma sessão aberta há no máximo 10 minutos (REAUTH_REQUIRED)', async () => {
+    let time = Date.parse('2026-11-13T12:00:00.000Z');
+    t = await createTestApp({ now: () => new Date(time), signInAsAdmin: false });
+    const ana = await t.signIn('ana@example.com', { username: 'ana', displayName: 'Ana' });
+    time += 10 * 60_000 + 1;
+    const res = await ana.request('DELETE', '/api/me');
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({ error: { code: 'REAUTH_REQUIRED', message: 'Por segurança, entre de novo para apagar a conta.' } });
+    expect(countUsers(t)).toBe(1);
+    const fresh = await t.signIn('ana@example.com');
+    expect((await fresh.request('DELETE', '/api/me')).statusCode).toBe(204);
+    expect(countUsers(t)).toBe(0);
+  });
+
+  it('quem ainda não criou o perfil também apaga; o admin não apaga pelo app', async () => {
+    t = await createTestApp();
+    const login = await devLogin(t, 'novo@example.com');
+    expect(login.session).toBeDefined();
+    const pending = await t.raw({
+      method: 'DELETE',
+      url: '/api/me',
+      headers: { host: TEST_HOST, origin: 'http://127.0.0.1:5173', 'x-quadro-client': '1', cookie: login.cookie },
+    });
+    expect(pending.statusCode).toBe(204);
+    const admin = await t.request('DELETE', '/api/me');
+    expect(admin.statusCode).toBe(409);
+    expect(admin.json().error.message).toBe('A conta de administrador não pode ser apagada pelo app.');
+  });
+
+  it('sem sessão dá 401; sem o header do cliente dá 403', async () => {
+    t = await createTestApp();
+    expect((await t.anonymous('DELETE', '/api/me')).statusCode).toBe(401);
+    const res = await t.raw({ method: 'DELETE', url: '/api/me', headers: { host: TEST_HOST, origin: 'http://127.0.0.1:5173', cookie: t.cookie } });
+    expect(res.statusCode).toBe(403);
   });
 });

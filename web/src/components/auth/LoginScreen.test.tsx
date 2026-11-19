@@ -32,9 +32,23 @@ describe('LoginScreen', () => {
     ['erro', 'Não foi possível entrar. Tente de novo.'],
     ['cancelado', 'O login foi cancelado.'],
     ['indisponivel', 'O login com Google está indisponível agora. Tente de novo em instantes.'],
+    ['limite', 'Muitas tentativas de entrar em pouco tempo. Espere alguns minutos e tente de novo.'],
+    ['desativada', 'Esta conta foi desativada. Se você acha que é um engano, escreva para o contato no rodapé.'],
   ] as const)('o resultado %s do login aparece como alerta', (outcome, message) => {
     renderLogin({ outcome });
     expect(screen.getByRole('alert')).toHaveTextContent(message);
+  });
+
+  it('a conta apagada é um aviso informativo (status), não um alerta', () => {
+    renderLogin({ outcome: 'conta-apagada' });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('status').some((el) => el.textContent === 'Sua conta foi apagada.')).toBe(true);
+  });
+
+  it('tem o rodapé com a privacidade e o contato', async () => {
+    renderLogin();
+    expect(screen.getByRole('link', { name: 'Privacidade' })).toHaveAttribute('href', '/privacidade');
+    expect(await screen.findByRole('link', { name: 'contato@example.com' })).toBeInTheDocument();
   });
 
   it('falha ao ler os métodos aparece como alerta', async () => {

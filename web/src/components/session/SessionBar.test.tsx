@@ -55,4 +55,31 @@ describe('SessionBar', () => {
     await waitFor(() => expect(onChooseBoard).toHaveBeenCalledWith(9));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
+
+  it('"Contas" só aparece para o admin; "Minha conta" aparece para todos', () => {
+    renderBar();
+    expect(screen.getByRole('button', { name: 'Contas' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Minha conta' })).toBeInTheDocument();
+  });
+
+  it('quem não é admin não vê "Contas"', () => {
+    const api = createFakeApi();
+    renderWithProviders(
+      <SessionBar user={{ ...FAKE_USER, role: 'user' }} boards={[PERSONAL_BOARD]} boardId={1} onChooseBoard={vi.fn()} />,
+      { api, boardId: null },
+    );
+    expect(screen.queryByRole('button', { name: 'Contas' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Minha conta' })).toBeInTheDocument();
+  });
+
+  it('"Minha conta" e "Contas" abrem os modais', async () => {
+    const { user } = renderBar();
+    await user.click(screen.getByRole('button', { name: 'Minha conta' }));
+    expect(screen.getByRole('dialog', { name: 'Minha conta' })).toBeInTheDocument();
+    // O modal tem dois "Fechar" (o X do cabeçalho e o do rodapé): qualquer um fecha.
+    await user.click(screen.getAllByRole('button', { name: 'Fechar' })[0] as HTMLElement);
+    expect(screen.queryByRole('dialog', { name: 'Minha conta' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Contas' }));
+    expect(screen.getByRole('dialog', { name: 'Contas' })).toBeInTheDocument();
+  });
 });

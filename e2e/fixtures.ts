@@ -10,12 +10,19 @@ import {
 } from '@playwright/test';
 import { BASE_URL } from './ports';
 
+/** Origem do projeto em execução: o Vite (desktop e mobile) ou o Fastify com o build (producao). */
+export function appOrigin(): string {
+  return new URL(base.info().project.use.baseURL ?? BASE_URL).origin;
+}
+
 /**
  * Headers obrigatórios em toda mutação pela API: o do cliente (mesmo valor de
- * CLIENT_HEADER em @quadro/shared) e o Origin, que o navegador manda sozinho
- * mas o request do Playwright não.
+ * CLIENT_HEADER em @quadro/shared) e o Origin do projeto, que o navegador manda
+ * sozinho mas o request do Playwright não.
  */
-export const CLIENT_HEADERS = Object.freeze({ 'X-Quadro-Client': '1', Origin: BASE_URL });
+export function clientHeaders(): Record<string, string> {
+  return { 'X-Quadro-Client': '1', Origin: appOrigin() };
+}
 
 export const DAY_NAMES = Object.freeze(['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'] as const);
 
@@ -73,11 +80,11 @@ export async function signIn(
   email: string,
   profile: E2eProfile = DEFAULT_PROFILE,
 ): Promise<E2eAccount> {
-  const login = await request.post('/api/auth/dev/login', { headers: CLIENT_HEADERS, data: { email } });
+  const login = await request.post('/api/auth/dev/login', { headers: clientHeaders(), data: { email } });
   expect(login.status(), 'login de teste').toBe(200);
   let me = (await login.json()) as { user: { id: number; handle: string; displayName: string; personalBoardId: number } | null };
   if (!me.user) {
-    const created = await request.post('/api/me/profile', { headers: CLIENT_HEADERS, data: profile });
+    const created = await request.post('/api/me/profile', { headers: clientHeaders(), data: profile });
     expect(created.status(), 'perfil de teste').toBe(200);
     me = (await created.json()) as typeof me;
   }
@@ -109,7 +116,7 @@ export async function createTask(
   boardId?: number,
 ): Promise<ApiTask> {
   const board = boardId ?? (await personalBoardId(request));
-  const response = await request.post(`/api/boards/${board}/tasks`, { headers: CLIENT_HEADERS, data: input });
+  const response = await request.post(`/api/boards/${board}/tasks`, { headers: clientHeaders(), data: input });
   expect(response.status()).toBe(201);
   return (await response.json()) as ApiTask;
 }
@@ -197,7 +204,7 @@ export interface OtherPerson {
 export async function openAs(browser: Browser, testInfo: TestInfo, label: string, profile: E2eProfile): Promise<OtherPerson> {
   const project = testInfo.project.use;
   const context = await browser.newContext({
-    baseURL: BASE_URL,
+    baseURL: project.baseURL ?? BASE_URL,
     locale: project.locale,
     timezoneId: project.timezoneId,
     viewport: project.viewport,

@@ -16,12 +16,13 @@ describe('openDatabase', () => {
     expect(sqliteVersion(temp.db)).toMatch(/^3\.\d+\.\d+$/);
   });
 
-  it('aplica WAL, busy_timeout e foreign_keys', () => {
+  it('aplica WAL, busy_timeout, foreign_keys e secure_delete', () => {
     temp = createTempDb({ migrate: false });
     const pragma = (name: string) => Object.values(temp!.db.prepare(`PRAGMA ${name}`).get() as object)[0];
     expect(pragma('journal_mode')).toBe('wal');
-    expect(pragma('busy_timeout')).toBe(3000);
+    expect(pragma('busy_timeout')).toBe(5000);
     expect(pragma('foreign_keys')).toBe(1);
+    expect(pragma('secure_delete')).toBe(1);
   });
 
   it('cria a pasta do arquivo quando não existe', () => {

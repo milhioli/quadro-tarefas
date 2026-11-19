@@ -179,6 +179,30 @@ export const MIGRATIONS: readonly string[] = Object.freeze([
     SELECT RAISE(ABORT, 'A tarefa não muda de quadro');
   END;
   `,
+  // 4: Fase 2b (docs/fase-2b.md).
+  // - invite_blocks: quem recusou um convite (ou saiu do grupo) não recebe outro
+  //   da mesma pessoa por 30 dias; a retenção apaga o bloqueio depois disso.
+  // - users.disabled_at: conta os 12 meses até a conta desativada ser apagada.
+  // - Índices para a retenção e para apagar a conta sem varrer as tabelas.
+  `
+  CREATE TABLE invite_blocks (
+    invitee_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    inviter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT    NOT NULL,
+    PRIMARY KEY (invitee_id, inviter_id),
+    CHECK (invitee_id <> inviter_id)
+  ) WITHOUT ROWID;
+  CREATE INDEX invite_blocks_inviter ON invite_blocks(inviter_id);
+  CREATE INDEX invite_blocks_created ON invite_blocks(created_at);
+  ALTER TABLE users ADD COLUMN disabled_at TEXT;
+  UPDATE users SET disabled_at = last_seen_at WHERE status = 'disabled';
+  CREATE INDEX users_status_seen ON users(status, last_seen_at);
+  CREATE INDEX sessions_expires ON sessions(expires_at);
+  CREATE INDEX audit_log_actor ON audit_log(actor_user_id);
+  CREATE INDEX audit_log_target ON audit_log(target_kind, target_id);
+  CREATE INDEX tasks_created_by ON tasks(created_by);
+  CREATE INDEX board_members_invited_by ON board_members(invited_by);
+  `,
 ]);
 
 export function schemaVersion(db: DatabaseSync): number {

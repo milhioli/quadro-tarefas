@@ -21,6 +21,8 @@ export const ME_KEY = ['me'] as const;
 export const AUTH_METHODS_KEY = ['auth', 'methods'] as const;
 export const BOARDS_KEY = ['boards', 'list'] as const;
 export const INVITES_KEY = ['invites'] as const;
+export const INFO_KEY = ['info'] as const;
+export const ACCOUNTS_KEY = ['admin', 'users'] as const;
 export const tasksKey = (boardId: number) => ['boards', boardId, 'tasks'] as const;
 export const moveKey = (boardId: number) => ['boards', boardId, 'tasks', 'move'] as const;
 export const membersKey = (boardId: number) => ['boards', boardId, 'members'] as const;

@@ -1,7 +1,15 @@
 // @vitest-environment node
 import { emptyDoc, type Task } from '@quadro/shared';
 import { describe, expect, it } from 'vitest';
-import { ApiError, NETWORK_MESSAGE, UNKNOWN_MESSAGE, createApiClient, describeError, type FetchLike } from './client';
+import {
+  ApiError,
+  NETWORK_MESSAGE,
+  RATE_LIMITED_MESSAGE,
+  UNKNOWN_MESSAGE,
+  createApiClient,
+  describeError,
+  type FetchLike,
+} from './client';
 
 const task: Task = {
   id: 5,
@@ -170,6 +178,17 @@ describe('conta, quadros e convites', () => {
     ['inviteMember', (api) => api.inviteMember(9, 'bia_02'), MEMBER, 'POST', '/api/boards/9/invites', { handle: 'bia_02' }, JSON_MUTATION_HEADERS],
     ['listInvites', (api) => api.listInvites(), { invites: [] }, 'GET', '/api/invites', undefined, READ_HEADERS],
     ['acceptInvite', (api) => api.acceptInvite(9), BOARD, 'POST', '/api/invites/9/accept', undefined, MUTATION_HEADERS],
+    [
+      'getInfo',
+      (api) => api.getInfo(),
+      { contactEmail: 'contato@example.com', operatorName: 'Operador' },
+      'GET',
+      '/api/info',
+      undefined,
+      READ_HEADERS,
+    ],
+    // A lista do admin grava auditoria: o header do cliente vai também no GET.
+    ['listAccounts', (api) => api.listAccounts(), { users: [] }, 'GET', '/api/admin/users', undefined, MUTATION_HEADERS],
   ];
 
   it.each(cases)('%s chama a rota certa', async (_name, call, response, method, url, body, headers) => {
@@ -193,6 +212,10 @@ describe('conta, quadros e convites', () => {
     ['deleteBoard', (api) => api.deleteBoard(9), 'DELETE', '/api/boards/9'],
     ['removeMember', (api) => api.removeMember(9, 4), 'DELETE', '/api/boards/9/members/4'],
     ['declineInvite', (api) => api.declineInvite(9), 'POST', '/api/invites/9/decline'],
+    ['deleteAccount', (api) => api.deleteAccount(), 'DELETE', '/api/me'],
+    ['setAccountStatus (desativar)', (api) => api.setAccountStatus(4, 'disabled'), 'POST', '/api/admin/users/4/disable'],
+    ['setAccountStatus (reativar)', (api) => api.setAccountStatus(4, 'active'), 'POST', '/api/admin/users/4/enable'],
+    ['deleteDisabledAccount', (api) => api.deleteDisabledAccount(4), 'POST', '/api/admin/users/4/delete'],
   ])('%s vai sem corpo nem Content-Type e aceita 204', async (_name, call, method, url) => {
     const { calls, fetch } = recorder(() => new Response(null, { status: 204 }));
     await expect(call(createApiClient({ fetch }))).resolves.toBeUndefined();
@@ -200,6 +223,16 @@ describe('conta, quadros e convites', () => {
     expect(calls[0]?.url).toBe(url);
     expect(calls[0]?.init.body).toBeUndefined();
     expect(headersOf(calls[0])).toEqual(MUTATION_HEADERS);
+  });
+
+  it('a lista de contas devolve só o array, e id de pessoa inválido nem chega à rede', async () => {
+    const user = { id: 4, handle: 'bia_02', email: 'bia@example.com', status: 'active', lastSeenAt: '2026-11-19T12:00:00.000Z' };
+    const accounts = recorder(() => json({ users: [user] }));
+    await expect(createApiClient({ fetch: accounts.fetch }).listAccounts()).resolves.toEqual([user]);
+    const none = recorder(() => json({}));
+    await expect(createApiClient({ fetch: none.fetch }).setAccountStatus(0, 'disabled')).rejects.toMatchObject({ code: 'VALIDATION' });
+    await expect(createApiClient({ fetch: none.fetch }).deleteDisabledAccount(1.5)).rejects.toMatchObject({ code: 'VALIDATION' });
+    expect(none.calls).toEqual([]);
   });
 
   it('401 vira ApiError UNAUTHENTICATED', async () => {
@@ -241,6 +274,17 @@ describe('erros', () => {
       code: 'UNKNOWN',
       message: UNKNOWN_MESSAGE,
     });
+  });
+
+  it('429 sem o corpo da API vira RATE_LIMITED; com o corpo, vale a mensagem do servidor', async () => {
+    const bare = recorder(() => new Response('Too Many Requests', { status: 429 }));
+    await expect(createApiClient({ fetch: bare.fetch }).listTasks(1)).rejects.toMatchObject({
+      status: 429,
+      code: 'RATE_LIMITED',
+      message: RATE_LIMITED_MESSAGE,
+    });
+    const body = recorder(() => json({ error: { code: 'RATE_LIMITED', message: 'Calma aí' } }, 429));
+    await expect(createApiClient({ fetch: body.fetch }).listTasks(1)).rejects.toMatchObject({ code: 'RATE_LIMITED', message: 'Calma aí' });
   });
 
   it('falha de rede vira NETWORK', async () => {

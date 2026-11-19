@@ -10,17 +10,28 @@ vi.mock('./Shell', async () => {
   };
 });
 
+vi.mock('./components/privacy/PrivacyPage', async () => {
+  const { createElement } = await import('react');
+  return { PrivacyPage: () => createElement('p', null, 'Página de privacidade montada') };
+});
+
 afterEach(() => {
   document.getElementById('root')?.remove();
   window.history.replaceState(null, '', '/');
+  vi.resetModules();
 });
+
+function mountRoot(): HTMLElement {
+  const root = document.createElement('div');
+  root.id = 'root';
+  document.body.append(root);
+  return root;
+}
 
 describe('main', () => {
   it('monta o Shell dentro de #root; o ?login= vira aviso e sai da barra', async () => {
     window.history.replaceState(null, '', '/?login=erro');
-    const root = document.createElement('div');
-    root.id = 'root';
-    document.body.append(root);
+    const root = mountRoot();
 
     await act(async () => {
       await import('./main');
@@ -30,5 +41,15 @@ describe('main', () => {
     expect(await screen.findByText(text)).toBeInTheDocument();
     expect(root).toContainElement(screen.getByText(text));
     expect(window.location.search).toBe('');
+  });
+
+  it('em /privacidade monta a página de privacidade, e não o Shell', async () => {
+    window.history.replaceState(null, '', '/privacidade');
+    mountRoot();
+    await act(async () => {
+      await import('./main');
+    });
+    expect(await screen.findByText('Página de privacidade montada')).toBeInTheDocument();
+    expect(screen.queryByText(/Shell montado/)).not.toBeInTheDocument();
   });
 });

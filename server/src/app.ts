@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import type { PublicInfo } from '@quadro/shared';
 import fastifyCookie from '@fastify/cookie';
 import Fastify, {
   type FastifyBaseLogger,
@@ -15,17 +16,23 @@ import { systemNow, type Now } from './clock';
 import { DEFAULT_GUARD_OPTIONS, type GuardOptions } from './config';
 import { registerErrorHandling } from './http/errors';
 import { registerGuard } from './http/guard';
+import { createLimiters, registerMutationLimit, type LimitName, type RateRule } from './http/rateLimit';
+import { registerWebRoutes, type WebDist } from './http/webDist';
+import { createAccountRepository } from './repositories/accountRepository';
 import { createAuditRepository } from './repositories/auditRepository';
 import { createBoardRepository } from './repositories/boardRepository';
 import { createSessionRepository } from './repositories/sessionRepository';
-import { createTaskStore } from './repositories/taskRepository';
+import { createTaskStore, type TaskLimits } from './repositories/taskRepository';
 import { createUserRepository } from './repositories/userRepository';
+import { registerAdminRoutes } from './routes/admin';
 import { registerAuthRoutes } from './routes/auth';
 import { registerBoardRoutes } from './routes/boards';
 import { registerCalendarRoutes } from './routes/calendar';
 import { registerHealthRoutes } from './routes/health';
+import { registerInfoRoutes } from './routes/info';
 import { registerInviteRoutes } from './routes/invites';
 import { registerTaskRoutes } from './routes/tasks';
+import { registerRetention } from './retention';
 
 export const BODY_LIMIT_BYTES = 256 * 1024;
 
@@ -35,6 +42,8 @@ export const API_SECURITY_HEADERS: Readonly<Record<string, string>> = Object.fre
   'X-Frame-Options': 'DENY',
   'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
   'Referrer-Policy': 'no-referrer',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
 });
 
 export interface BuildAppOptions {
@@ -47,6 +56,21 @@ export interface BuildAppOptions {
   /** Agenda da Apple. Ausente = desligada. Recebe o logger do app. */
   calendar?: (log: FastifyBaseLogger) => CalendarService;
   auth?: AuthOptions;
+  /** Contato e responsável, para `GET /api/info`. Padrão: os dois nulos. */
+  info?: PublicInfo;
+  /** Build do web (deploy e E2E de produção). Ausente = só a API, como no dev (o Vite serve o web). */
+  webDist?: WebDist;
+  /**
+   * Atrás do Caddy, no mesmo namespace de rede: o IP do cliente vem do
+   * X-Forwarded-For que o Caddy grava. Só no modo público; nunca `true`.
+   */
+  behindProxy?: boolean;
+  /** Troca pontual dos limites de taxa (testes). Padrão: RATE_LIMITS. */
+  rateLimits?: Partial<Record<LimitName, RateRule>>;
+  /** Tetos das tarefas e o disjuntor de disco. Padrão: DEFAULT_TASK_LIMITS (o index.ts lê QUADRO_DB_MAX_MB). */
+  taskLimits?: Partial<TaskLimits>;
+  /** Job diário de retenção (servidor normal). Desligado nos testes e no E2E. */
+  retention?: boolean;
 }
 
 export interface AuthOptions {
@@ -75,7 +99,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger: safeLoggerOptions(options.logger ?? false),
     bodyLimit: BODY_LIMIT_BYTES,
-    trustProxy: false,
+    trustProxy: options.behindProxy ? '127.0.0.1' : false,
     onProtoPoisoning: 'error',
     onConstructorPoisoning: 'error',
   });
@@ -101,7 +125,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const sessions = createSessionRepository(options.db, now);
   const audit = createAuditRepository(options.db, now);
   const suggestions = createNameSuggestions();
-  registerSession(app, { users, sessions, cookie, allowDevUsers: devLogin });
+  const accounts = createAccountRepository(options.db);
+  registerSession(app, { users, sessions, cookie, allowDevUsers: devLogin, now });
+  const limits = createLimiters(now, options.rateLimits);
+  registerMutationLimit(app, limits.mutation);
   registerAuthRoutes(app, {
     users,
     sessions,
@@ -113,15 +140,22 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     appOrigin,
     identity: auth.identity ?? null,
     pending: auth.pendingLogins ?? createPendingLogins(now),
+    limits,
+    accounts,
+    now,
   });
 
-  const store = createTaskStore(options.db, now);
+  const store = createTaskStore(options.db, now, options.taskLimits);
   const boards = createBoardRepository(options.db, now);
   registerHealthRoutes(app);
-  registerBoardRoutes(app, { boards, store, users, audit });
+  registerInfoRoutes(app, options.info ?? { contactEmail: null, operatorName: null });
+  registerBoardRoutes(app, { boards, store, users, audit, limits });
   registerTaskRoutes(app, { store, boards });
   registerInviteRoutes(app, { boards, audit });
+  registerAdminRoutes(app, { users, audit, accounts, suggestions });
   registerCalendarRoutes(app, options.calendar ? options.calendar(app.log) : disabledCalendarService, now);
+  if (options.webDist) registerWebRoutes(app, options.webDist);
+  if (options.retention) registerRetention(app, { db: options.db, now, accounts, audit, suggestions });
 
   return app;
 }

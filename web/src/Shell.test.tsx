@@ -174,3 +174,26 @@ describe('Shell: grupos e convites', () => {
     expect(within(boardSelect()).queryByRole('option', { name: 'Equipe' })).not.toBeInTheDocument();
   });
 });
+
+describe('Shell: apagar a conta', () => {
+  it('depois de apagar, volta ao login com o aviso e esquece o quadro escolhido', async () => {
+    const api = withBoards();
+    api.setMe({ user: { id: 7, handle: 'ana_07', displayName: 'Ana', role: 'user', personalBoardId: 1 }, pendingProfile: null });
+    window.localStorage.setItem(BOARD_STORAGE_KEY, '9');
+    const { user } = renderShell(api);
+    await user.click(await screen.findByRole('button', { name: 'Minha conta' }));
+    await user.click(screen.getByRole('button', { name: 'Apagar minha conta' }));
+    await user.type(screen.getByRole('textbox', { name: /Para confirmar/ }), 'ana_07');
+    await user.click(screen.getByRole('button', { name: 'Apagar minha conta' }));
+
+    expect(await screen.findByText('Sua conta foi apagada.')).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Entrar com Google' })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(window.localStorage.getItem(BOARD_STORAGE_KEY)).toBeNull();
+  });
+
+  it('o app logado tem o rodapé com a privacidade', async () => {
+    renderShell();
+    expect(await screen.findByRole('link', { name: 'Privacidade' })).toHaveAttribute('href', '/privacidade');
+  });
+});

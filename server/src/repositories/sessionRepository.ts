@@ -33,6 +33,8 @@ export interface SessionRepository {
   resolve(token: string): number | null;
   delete(token: string): void;
   deleteForUser(userId: number): void;
+  /** Quando a sessão do token foi criada (reautenticação de ações sensíveis), ou null. */
+  createdAt(token: string): string | null;
 }
 
 export function createSessionRepository(db: DatabaseSync, now: Now): SessionRepository {
@@ -84,6 +86,12 @@ export function createSessionRepository(db: DatabaseSync, now: Now): SessionRepo
 
     deleteForUser(userId) {
       statements.deleteForUser.run(userId);
+    },
+
+    createdAt(token) {
+      if (!TOKEN_PATTERN.test(token)) return null;
+      const row = statements.get.get(hashSessionToken(token)) as unknown as SessionRow | undefined;
+      return row ? row.created_at : null;
     },
   };
 }

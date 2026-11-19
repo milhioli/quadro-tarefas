@@ -5,7 +5,7 @@ import type { LoginChecks } from './identity';
 /** Tempo para a pessoa voltar do Google. */
 export const PENDING_LOGIN_TTL_MS = 10 * 60 * 1000;
 /** Teto de logins em andamento. Com o mapa cheio, logins novos são recusados (não se expulsa ninguém). */
-export const PENDING_LOGIN_MAX = 1000;
+export const PENDING_LOGIN_MAX = 10_000;
 
 /** Formato do id que vai no cookie `quadro_oauth`: 32 bytes em base64url. */
 const PENDING_ID = /^[A-Za-z0-9_-]{43}$/;

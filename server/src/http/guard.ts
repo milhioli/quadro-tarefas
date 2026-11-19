@@ -9,9 +9,13 @@ const CLIENT_HEADER_KEY = CLIENT_HEADER.toLowerCase();
 /**
  * Verifica o header Host por igualdade exata de hostname e porta.
  * Nada de startsWith/includes: `localhost.atacante.com` precisa falhar.
+ * No deploy, o Host precisa ser exatamente o do APP_ORIGIN (o Caddy repassa o
+ * Host do navegador). Sempre o header cru: nunca `request.hostname`, que com
+ * trustProxy seguiria o X-Forwarded-Host.
  */
 export function isAllowedHost(host: string | undefined, options: GuardOptions): boolean {
   if (!host) return false;
+  if (options.publicHost !== null) return host.trim().toLowerCase() === options.publicHost;
   const match = /^([^:]+):(\d{1,5})$/.exec(host.trim().toLowerCase());
   if (!match) return false;
   const [, hostname, port] = match as unknown as [string, string, string];

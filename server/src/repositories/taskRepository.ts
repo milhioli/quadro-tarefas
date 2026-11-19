@@ -16,6 +16,7 @@ import {
 } from '@quadro/shared';
 import { nowIso, type Now } from '../clock';
 import { withTransaction } from '../db/transaction';
+import { LimitReachedError, StorageFullError } from '../http/errors';
 
 interface TaskRow {
   id: number;
@@ -87,6 +88,27 @@ export interface TaskRepository {
   reset(): { tasks: Task[]; moved: number };
 }
 
+/**
+ * Tetos das tarefas (Fase 2b): contra um quadro (ou uma conta) encher o disco.
+ * O conteúdo conta em bytes do JSON gravado. Os testes trocam os números.
+ */
+export interface TaskLimits {
+  maxTasksPerBoard: number;
+  maxContentBytesPerBoard: number;
+  /** Somando o quadro pessoal e os grupos de que a pessoa é dona. */
+  maxContentBytesPerOwner: number;
+  /** Disjuntor global: banco maior que isso não aceita criar nem editar (ler e apagar continuam). */
+  maxDbBytes: number;
+}
+
+const MIB = 1024 * 1024;
+export const DEFAULT_TASK_LIMITS: Readonly<TaskLimits> = Object.freeze({
+  maxTasksPerBoard: 500,
+  maxContentBytesPerBoard: 8 * MIB,
+  maxContentBytesPerOwner: 32 * MIB,
+  maxDbBytes: 1024 * MIB,
+});
+
 /** Acesso às tarefas de todos os quadros, sempre por um quadro de cada vez. */
 export interface TaskStore {
   /** Quadro da tarefa, ou null. Sozinho, não autoriza nada: quem autoriza é o membro do quadro. */
@@ -95,7 +117,8 @@ export interface TaskStore {
   forBoard(boardId: number, actorId?: number | null): TaskRepository;
 }
 
-export function createTaskStore(db: DatabaseSync, now: Now): TaskStore {
+export function createTaskStore(db: DatabaseSync, now: Now, overrides: Partial<TaskLimits> = {}): TaskStore {
+  const limits: TaskLimits = { ...DEFAULT_TASK_LIMITS, ...overrides };
   const statements = {
     list: db.prepare(
       `SELECT * FROM tasks WHERE board_id = ?
@@ -120,7 +143,25 @@ export function createTaskStore(db: DatabaseSync, now: Now): TaskStore {
     ),
     /** Versão do quadro: sobe a cada mudança real (a Fase 3 usa para o tempo real). */
     bump: db.prepare('UPDATE boards SET version = version + 1 WHERE id = ?'),
+    countBoard: db.prepare('SELECT COUNT(*) AS n FROM tasks WHERE board_id = ?'),
+    boardBytes: db.prepare('SELECT COALESCE(SUM(length(CAST(content AS BLOB))), 0) AS n FROM tasks WHERE board_id = ?'),
+    ownerBytes: db.prepare(
+      `SELECT COALESCE(SUM(length(CAST(t.content AS BLOB))), 0) AS n FROM tasks t
+       WHERE t.board_id IN (
+         SELECT o.board_id FROM board_members o
+         WHERE o.role = 'owner' AND o.user_id = (SELECT user_id FROM board_members WHERE board_id = ? AND role = 'owner')
+       )`,
+    ),
+    pageCount: db.prepare('PRAGMA page_count'),
+    pageSize: db.prepare('PRAGMA page_size'),
   };
+
+  /** Disjuntor de disco: antes de criar ou editar. */
+  function assertRoom(): void {
+    const { page_count } = statements.pageCount.get() as { page_count: number };
+    const { page_size } = statements.pageSize.get() as { page_size: number };
+    if (page_count * page_size > limits.maxDbBytes) throw new StorageFullError();
+  }
 
   function forBoard(boardId: number, actorId: number | null = null): TaskRepository {
     function readPositions(): Position[] {
@@ -162,12 +203,33 @@ export function createTaskStore(db: DatabaseSync, now: Now): TaskStore {
 
     const bump = () => statements.bump.run(boardId);
 
+    /** Depois de gravar, ainda dentro da transação: passou do teto, desfaz tudo. */
+    function assertContentWithinLimits(): void {
+      const { n: board } = statements.boardBytes.get(boardId) as { n: number };
+      if (board > limits.maxContentBytesPerBoard) {
+        throw new LimitReachedError('O conteúdo das tarefas deste quadro chegou ao limite. Apague ou encurte alguma tarefa.');
+      }
+      const { n: owner } = statements.ownerBytes.get(boardId) as { n: number };
+      if (owner > limits.maxContentBytesPerOwner) {
+        throw new LimitReachedError(
+          'Os quadros de quem é dono deste quadro chegaram ao limite de conteúdo. Apague ou encurte alguma tarefa.',
+        );
+      }
+    }
+
     return {
       list,
       get,
 
       create(input) {
         return withTransaction(db, () => {
+          assertRoom();
+          const { n } = statements.countBoard.get(boardId) as { n: number };
+          if (n >= limits.maxTasksPerBoard) {
+            throw new LimitReachedError(
+              `Este quadro chegou ao limite de ${limits.maxTasksPerBoard} tarefas. Apague alguma para criar outra.`,
+            );
+          }
           const timestamp = nowIso(now);
           const { next } = statements.nextDeckOrder.get(boardId) as { next: number };
           // Nasce no deck (onde qualquer span é válido) e só depois vai para a célula.
@@ -185,6 +247,7 @@ export function createTaskStore(db: DatabaseSync, now: Now): TaskStore {
           const id = Number(result.lastInsertRowid);
           // Na mesma transação: se a faixa estiver ocupada, o INSERT é desfeito.
           if (input.position) writePositions(planPlacement(readPositions(), id, input.position), timestamp);
+          assertContentWithinLimits();
           bump();
           return get(id) as Task;
         });
@@ -194,6 +257,7 @@ export function createTaskStore(db: DatabaseSync, now: Now): TaskStore {
         return withTransaction(db, () => {
           const current = get(id);
           if (!current) return null;
+          assertRoom();
           const timestamp = nowIso(now);
           const span = patch.span ?? current.span;
 
@@ -218,6 +282,7 @@ export function createTaskStore(db: DatabaseSync, now: Now): TaskStore {
               boardId,
             );
           });
+          if (patch.content !== undefined) assertContentWithinLimits();
           bump();
           return get(id);
         });

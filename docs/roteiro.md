@@ -90,7 +90,67 @@
 > - **Fase 2b (decidida em 19/11/2026):**
 >   - **A ordem do roteiro se mantém:** a 2b vem antes da Fase 3, que é o tempo real.
 >   - **Escopo:** o usuário ainda não tem VPS nem domínio. Por isso, a 2b prepara o código e o pacote de deploy (Dockerfile, Caddy e Litestream), testados localmente. A publicação fica para quando houver o servidor.
->   - **Próximo passo:** o plano da 2b, com a revisão do `cybersecurity-reviewer`.
+>   - **Plano da 2b:** aprovado em 19/11/2026 e guardado em `docs/fase-2b.md`.
+>     - Foi desenhado por dois agentes de planejamento.
+>     - Passou pelo `cybersecurity-reviewer`, com o veredito "aprovado com ressalvas": 1 bloqueante (o `.dockerignore` em allowlist) e 10 recomendados, todos incorporados.
+>   - **Decisões do usuário nesse plano:**
+>     - a agenda é por pessoa, na Fase 4. Em produção, o servidor recusa a agenda global;
+>     - quem apaga a conta passa os grupos ao membro ativo mais antigo, e as tarefas que criou nos grupos ficam sem autor;
+>     - o admin ganha a tela "Contas";
+>     - conta desativada é apagada depois de 12 meses, e conta sem uso depois de 24.
+>   - **Mudanças em relação ao roteiro:**
+>     - o `@fastify/static` e o `@fastify/rate-limit` dão lugar a código próprio, sem dependência nova;
+>     - a auditoria passa a ser apagada aos 180 dias, não só anonimizada;
+>     - o aviso geral do admin (`POST /api/admin/notice`) vai para a Fase 4.
+>   - **Em andamento:** a implementação, nos passos de `docs/fase-2b.md`, cada um validado pelo `test-runner`.
+>     - **Passos 0–3 (19/11):** feitos e aprovados pelo `test-runner`, com 1130 testes.
+>       - O `shared` ganhou os tipos de admin e de informação pública, a lista fechada de resultados de login e os códigos `RATE_LIMITED`, `REAUTH_REQUIRED` e `STORAGE_FULL`.
+>       - A migração 4 criou o `invite_blocks`, o `users.disabled_at` e os índices da retenção.
+>       - O SQLite passou a usar `secure_delete` e `busy_timeout` de 5000.
+>       - Entrou o limitador de taxa próprio, ainda sem ligação com as rotas.
+>     - **Passos 4–6 (19/11):** feitos e aprovados pelo `test-runner`, com 1191 testes.
+>       - **Modo público:** exige `NODE_ENV=production` e `APP_ORIGIN` https. Recusa subir sem Google, admin, contato, responsável ou `DB_PATH`, e recusa a agenda global.
+>       - **Guard público:** aceita só o Host e o Origin do `APP_ORIGIN`, sempre pelo header cru.
+>       - **`trustProxy`:** é `'127.0.0.1'` só no modo público.
+>       - **Estáticos sem `@fastify/static`:** o `web/dist` é lido para a memória, com três rotas públicas e a CSP estrita do HTML.
+>       - **Cookies:** `__Host-` com `Secure` em https.
+>       - **`GET /api/info`:** novo, devolve o contato e o responsável.
+>       - **`e2eEntry --static`:** serve o build numa porta única, para o E2E de produção.
+>     - **Passo 7 (19/11):** feito e aprovado pelo `test-runner`, com 1209 testes.
+>       - **Limites ligados:** início do login por IP; cadastro global, por IP e por hash do `sub`; mutações por pessoa; criação de grupo e convites. O excesso responde 429 `RATE_LIMITED`, ou volta com `?login=limite`.
+>       - **Tetos:** 20 grupos por dono, 50 membros e 20 convites pendentes por grupo, e 500 tarefas por quadro.
+>       - **Conteúdo:** até 8 MiB por quadro e 32 MiB por dono.
+>       - **Disjuntor de disco:** o `QUADRO_DB_MAX_MB` responde 503 `STORAGE_FULL`.
+>       - **Convites:** só 1 pendente por par. Recusar ou sair bloqueia o reconvite por 30 dias.
+>     - **Passos 8–10 (19/11):** feitos e aprovados pelo `test-runner`, com 1241 testes.
+>       - **Rotas de admin:** listar (exige `X-Quadro-Client`), desativar, reativar e apagar só conta desativada. Para quem não é admin, a resposta é o 404 de rota desconhecida, e tudo é auditado.
+>       - **Contas desativadas:** a sessão é apagada, e o login volta com `?login=desativada`.
+>       - **Último acesso:** passou a ser gravado.
+>       - **`DELETE /api/me`:** exige uma sessão de até 10 minutos (403 `REAUTH_REQUIRED`). O admin recebe 409. Os grupos da pessoa passam ao membro ativo mais antigo, os convites que ela enviou são cancelados e a auditoria fica sem ela.
+>       - **Retenção diária:** apaga as sessões vencidas, a auditoria com mais de 180 dias, os bloqueios e convites com mais de 30 dias e as contas sem perfil após 7 dias. Também apaga as contas desativadas após 12 meses e as sem uso após 24 meses, nunca o admin.
+>     - **Passos 11–12 (19/11):** feitos e aprovados pelo `test-runner`, com 1295 testes em duas execuções seguidas.
+>       - **Primeira rodada reprovada:** um tipo errado e uma busca ambígua por "Fechar" em dois testes novos, já corrigidos. Uma terceira falha apareceu uma vez e não se repetiu.
+>       - **TipTap:** usa `injectCSS: false`, com as regras base do ProseMirror copiadas no `app.css`.
+>       - **Dependências e scripts:** o `tsx` passou a dependência de runtime do server, e entraram os scripts `build`, `start` e `dev:e2e:static`. `npm audit` deu 0 e as assinaturas foram verificadas.
+>       - **Telas novas:** a `/privacidade` é escolhida pelo caminho e abre sem login. O rodapé leva à privacidade e ao contato. "Minha conta" apaga a conta digitando o handle e oferece entrar de novo diante de `REAUTH_REQUIRED`. O admin tem a tela "Contas" para desativar, reativar e apagar.
+>       - **Avisos de login:** entram `limite` e `desativada`. O `conta-apagada` é interno e nunca vem da URL.
+>     - **Passo 13 (19/11):** escrito, com a checagem estática aprovada pelo `test-runner` (typecheck dos 5 alvos e greps). O E2E fica com o usuário.
+>       - **Projeto `producao`:** um segundo servidor (`npm run dev:e2e:static`, porta 3201) serve o build pelo Fastify, com a CSP estrita.
+>       - **Fixtures:** o `clientHeaders()` tira o `Origin` do projeto.
+>       - **Jornadas novas:** CSP e cache do build, nenhum `<style>` com o editor aberto, `/privacidade` sem login, apagar a conta com o grupo passando para a outra pessoa, o admin desativando, reativando e apagando, e quem não é admin sem "Contas".
+>     - **Passo 14 (19/11):** escrito: `deploy/` (Dockerfile, compose, Caddyfile e Litestream) e o `.dockerignore` em allowlist. O `.gitattributes` não mudou: ele já força LF em tudo, inclusive em `deploy/`.
+>       - **Versões:** imagens fixadas por digest, com pelo menos 2 semanas: Node 24.22.2, Caddy 2.11.9 e Litestream 0.5.18. O Node 24.22.3, de segurança, completa 2 semanas em 24/11/2026.
+>       - **Já validado pelo `test-runner`:** o compose com o exemplo, e a separação de chaves (o segredo do Google só no app, a chave do bucket só no Litestream).
+>       - **Pendente:** `docker build`, a checagem do conteúdo da imagem, `caddy validate` e a config do Litestream. O Docker Desktop estava parado.
+>     - **Passo 15 (19/11):** documentação feita: `docs/deploy.md`, `docs/incidente.md`, CLAUDE.md (seção "Produção e deploy" e regras de Docker para agentes), README, `.env.example` e, neste roteiro, a tabela de retenção, as dependências e o aviso do admin na Fase 4.
+>     - **Commit e push (19/11):** a pedido do usuário, antes das checagens de Docker, do E2E e do teste humano, que seguem pendentes.
+>     - **Falta:**
+>       1. as quatro checagens de Docker (com o Docker Desktop aberto);
+>       2. o `npm run test:e2e` na máquina do usuário;
+>       3. o teste humano local com Docker (`docs/fase-2b.md`, "Verificação");
+>       4. o commit, com o pedido do usuário.
+>
+>       Antes de publicar: o provedor e o país da VPS e do bucket no texto da `/privacidade`, com revisão jurídica.
 > **Revisão 2 (17/11/2026):** o usuário esclareceu que 500 era só um exemplo: **não há teto de usuários** (ver "Crescer sem teto"). Privacidade, plano de incidente e retenção deixaram de ser pendências e viraram itens concretos (seção "Privacidade, incidente e retenção").
 > **Revisão 3 (17/11/2026):** os eventos da agenda ficam em memória enquanto a pessoa usa o app, e entra a **Fase 0: testes E2E no navegador** (Playwright), antes da Fase 1.
 > **Revisões incorporadas:** leitura independente do código para a Fase 1 (agente de planejamento) e parecer do `cybersecurity-reviewer` para as fases 2–4 (7 bloqueantes, 11 recomendados, 7 opcionais e 9 contradições com o CLAUDE.md/código — todos tratados; resumo na seção final). Os três itens que antes iam para o usuário ou o encarregado (privacidade, incidente e retenção) agora estão resolvidos na seção própria.
@@ -340,7 +400,7 @@ Grade de horários configurável por quadro; convite por link; notificações; e
 |---|---|---|---|
 | 0 | `@playwright/test` (dev) | testes E2E no navegador | navegador baixado num passo explícito (`ignore-scripts` continua); só Chromium; o servidor de teste nunca sobe com `--agenda` |
 | 2 | `openid-client` | OIDC do Google (login) e OAuth incremental (agenda) | faz HTTP próprio → recebe `customFetch` guardado (allowlist Google); entra na lista do CLAUDE.md de dependências que tocam conteúdo externo |
-| 2 | `@fastify/cookie`, `@fastify/static`, `@fastify/rate-limit` | sessão, estáticos, limite de taxa | `@fastify/static` só sobre `web/dist`, `dotfiles: 'deny'` |
+| 2 | `@fastify/cookie` (os estáticos e o limite de taxa viraram código próprio na 2b) | sessão | `@fastify/static` e `@fastify/rate-limit` saíram em 19/11/2026: a rota curinga do primeiro quebraria a lista fechada de rotas públicas, e o segundo não usa o relógio injetado |
 | 3 | `@fastify/websocket` (traz `ws`) | WebSocket | `ws` parseia frames de clientes não confiáveis → também entra na lista do CLAUDE.md |
 | 4 | nenhuma (`node:crypto`, `fetch` guardado) | cifra e Google Calendar REST | — |
 
@@ -479,7 +539,7 @@ O texto final precisa ser revisado por quem responde juridicamente pelo app (a p
   - O app já tem o e-mail de cada conta, que vem do login Google.
   - Por enquanto o app não envia e-mail sozinho, porque isso exigiria mais um segredo (SMTP) e mais uma saída de rede.
   - A rota admin `GET /api/admin/incident/recipients?provider=apple` devolve os e-mails das contas com conexão Apple, e o admin os envia em **cópia oculta** pela caixa do `QUADRO_CONTACT_EMAIL`.
-  - Além disso, `POST /api/admin/notice` publica um **aviso no topo do app**, que todos veem na próxima vez que abrirem.
+  - Além disso, `POST /api/admin/notice` publica um **aviso no topo do app**, que todos veem na próxima vez que abrirem. **Decidido em 19/11/2026:** esse aviso entra na Fase 4, junto com a custódia das senhas de app. O procedimento executável da 2b está em `docs/incidente.md`.
   - Se a base crescer além do que uma caixa envia por dia (algumas centenas num Gmail comum), o envio passa para uma API de e-mail pelo `guardedFetch`.
 - **Procedimento (`docs/incidente.md`):**
   1. Tirar o app do ar ou desligar a agenda (subir sem `--agenda`).
@@ -496,9 +556,15 @@ O texto final precisa ser revisado por quem responde juridicamente pelo app (a p
 | Eventos da agenda | enquanto a pessoa está usando o app, só em memória (atualizados a cada 5 min) | somem ao sair, após 30 min sem uso, ao desconectar a agenda ou se o servidor reiniciar; nunca vão para o banco |
 | Sessão de login | 30 dias sem uso (no máximo 90) | é apagada; a pessoa precisa entrar de novo |
 | Conexão de agenda sem uso | 90 dias | é apagada, e a pessoa é avisada no app |
-| Conta apagada pela própria pessoa | na hora | tudo some: tarefas pessoais, conexões, sessões, convites |
-| Registro de auditoria | 180 dias | é anonimizado (perde quem fez) |
-| Backup (Litestream) | 7 dias | o que foi apagado some também do backup ao fim do prazo |
+| Conta apagada pela própria pessoa | na hora | tudo some: tarefas pessoais, conexões, sessões, convites. Os grupos que ela criou passam ao membro ativo mais antigo; as tarefas dela em grupos ficam sem autor |
+| Conta que nunca concluiu o primeiro acesso | 7 dias sem uso | é apagada |
+| Conta desativada pelo admin | 12 meses depois da desativação | é apagada |
+| Conta sem nenhum acesso | 24 meses | é apagada (o admin nunca); o aviso por e-mail fica para quando o app enviar e-mail |
+| Convite sem resposta | 30 dias | é apagado |
+| Bloqueio de reconvite (depois de recusar ou sair) | 30 dias | é apagado |
+| Registro de auditoria | 180 dias | **é apagado** (decisão de 19/11/2026: anonimizar não bastava, porque o id do quadro, junto com o dono, reidentifica quem agiu) |
+| IP e hash do `sub` do Google (limites de taxa) | até 24 h, só em memória | somem sozinhos; zeram também quando o servidor reinicia |
+| Backup (Litestream) | 7 dias de retenção | o que foi apagado some também do backup em até ~10 dias (retenção + intervalo do snapshot + expiração das versões no bucket) |
 
 Um job diário no próprio processo, sem cron externo, aplica a tabela, lendo a hora pelo `server/src/clock.ts`.
 

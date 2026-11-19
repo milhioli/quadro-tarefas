@@ -11,7 +11,8 @@ import {
   test,
 } from './fixtures';
 
-test('cria uma tarefa com cor e checklist, e ela continua igual depois de recarregar', async ({ page }) => {
+// @producao: também roda contra o build servido pelo Fastify, com a CSP estrita do HTML.
+test('cria uma tarefa com cor e checklist, e ela continua igual depois de recarregar', { tag: '@producao' }, async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Nova tarefa' }).click();
 
@@ -47,39 +48,40 @@ test('cria uma tarefa com cor e checklist, e ela continua igual depois de recarr
   await expect(edit).toBeHidden();
 });
 
-test('arrasta do deck para o quadro, entre células, troca ao soltar numa ocupada e volta para o deck', async ({
-  page,
-  request,
-}) => {
-  await createTask(request, { title: 'Academia' });
-  await createTask(request, { title: 'Reunião', position: { kind: 'cell', day: 0, slot: 1 } });
-  await page.goto('/');
-  await expect(taskCard(boardCell(page, 0, 1), 'Reunião')).toBeVisible();
+test(
+  'arrasta do deck para o quadro, entre células, troca ao soltar numa ocupada e volta para o deck',
+  { tag: '@producao' },
+  async ({ page, request }) => {
+    await createTask(request, { title: 'Academia' });
+    await createTask(request, { title: 'Reunião', position: { kind: 'cell', day: 0, slot: 1 } });
+    await page.goto('/');
+    await expect(taskCard(boardCell(page, 0, 1), 'Reunião')).toBeVisible();
 
-  // Deck → célula livre (segunda 05:00).
-  await dragTo(page, taskCard(deckRegion(page), 'Academia'), boardCell(page, 0, 0));
-  await expect(taskCard(boardCell(page, 0, 0), 'Academia')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Tarefas (0)' })).toBeVisible();
+    // Deck → célula livre (segunda 05:00).
+    await dragTo(page, taskCard(deckRegion(page), 'Academia'), boardCell(page, 0, 0));
+    await expect(taskCard(boardCell(page, 0, 0), 'Academia')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Tarefas (0)' })).toBeVisible();
 
-  // Célula → célula ocupada: as duas trocam.
-  await dragTo(page, taskCard(boardCell(page, 0, 0), 'Academia'), boardCell(page, 0, 1));
-  await expect(taskCard(boardCell(page, 0, 1), 'Academia')).toBeVisible();
-  await expect(taskCard(boardCell(page, 0, 0), 'Reunião')).toBeVisible();
+    // Célula → célula ocupada: as duas trocam.
+    await dragTo(page, taskCard(boardCell(page, 0, 0), 'Academia'), boardCell(page, 0, 1));
+    await expect(taskCard(boardCell(page, 0, 1), 'Academia')).toBeVisible();
+    await expect(taskCard(boardCell(page, 0, 0), 'Reunião')).toBeVisible();
 
-  // Célula → célula livre em outro dia (terça 06:00).
-  await dragTo(page, taskCard(boardCell(page, 0, 1), 'Academia'), boardCell(page, 1, 2));
-  await expect(taskCard(boardCell(page, 1, 2), 'Academia')).toBeVisible();
-  await expect(boardCell(page, 0, 1)).toBeEmpty();
+    // Célula → célula livre em outro dia (terça 06:00).
+    await dragTo(page, taskCard(boardCell(page, 0, 1), 'Academia'), boardCell(page, 1, 2));
+    await expect(taskCard(boardCell(page, 1, 2), 'Academia')).toBeVisible();
+    await expect(boardCell(page, 0, 1)).toBeEmpty();
 
-  // Célula → deck.
-  await dragTo(page, taskCard(boardCell(page, 0, 0), 'Reunião'), deckRegion(page));
-  await expect(taskCard(deckRegion(page), 'Reunião')).toBeVisible();
-  await expect(boardCell(page, 0, 0)).toBeEmpty();
+    // Célula → deck.
+    await dragTo(page, taskCard(boardCell(page, 0, 0), 'Reunião'), deckRegion(page));
+    await expect(taskCard(deckRegion(page), 'Reunião')).toBeVisible();
+    await expect(boardCell(page, 0, 0)).toBeEmpty();
 
-  const tasks = await listTasks(request);
-  expect(tasks.find((t) => t.title === 'Academia')).toMatchObject({ day: 1, slot: 2 });
-  expect(tasks.find((t) => t.title === 'Reunião')).toMatchObject({ day: null, slot: null });
-});
+    const tasks = await listTasks(request);
+    expect(tasks.find((t) => t.title === 'Academia')).toMatchObject({ day: 1, slot: 2 });
+    expect(tasks.find((t) => t.title === 'Reunião')).toMatchObject({ day: null, slot: null });
+  },
+);
 
 test('o campo Quando mostra o horário ocupado desabilitado e agenda num horário livre', async ({ page, request }) => {
   await createTask(request, { title: 'Dentista', position: { kind: 'cell', day: 0, slot: 2 } });

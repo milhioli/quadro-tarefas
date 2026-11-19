@@ -6,7 +6,8 @@ import type { MutableEnv } from './calendar/config';
 import { API_HOST, guardOptionsFor, loadConfig, type Env } from './config';
 import { openDatabase } from './db/connection';
 import { migrate } from './db/migrations';
-import { DEFAULT_DB_PATH, isEntrypoint } from './index';
+import { loadWebDist } from './http/webDist';
+import { DEFAULT_DB_PATH, WEB_DIST_DIR, isEntrypoint } from './index';
 import { createUserRepository } from './repositories/userRepository';
 import { systemNow } from './clock';
 
@@ -19,6 +20,10 @@ import { systemNow } from './clock';
  *   banco próprio (DB_PATH explícito e diferente do banco real) ou com
  *   credenciais no ambiente;
  * - recusa um banco que tenha qualquer conta real (sub sem o prefixo `dev:`).
+ *
+ * Com `--static` (só pela linha de comando, como o `--agenda`), serve também o
+ * build do web numa porta única (API_PORT = WEB_PORT), com a CSP do HTML: é o
+ * projeto `producao` do Playwright, o único que exercita a CSP estrita.
  */
 export class E2eStartError extends Error {
   constructor(message: string) {
@@ -30,6 +35,8 @@ export class E2eStartError extends Error {
 const ALLOWED_NODE_ENV: ReadonlySet<string | undefined> = new Set([undefined, '', 'development', 'test']);
 const FORBIDDEN_ENV_KEYS = ['GOOGLE_CLIENT_SECRET', 'GOOGLE_CLIENT_ID'] as const;
 const FORBIDDEN_ENV_PREFIX = 'ICLOUD_';
+/** Liga os estáticos (`npm run dev:e2e:static`). Nunca vem do ambiente. */
+export const STATIC_FLAG = '--static';
 
 /** Confere o ambiente antes de abrir qualquer coisa. As mensagens nunca ecoam valores. */
 export function assertE2eEnvironment(env: Env): void {
@@ -48,20 +55,38 @@ export function assertE2eEnvironment(env: Env): void {
   }
 }
 
-/** O admin do E2E só pode ser uma conta de teste; qualquer outro e-mail é ignorado. */
-export function e2eAdminEmail(raw: string | null): string | null {
+/** No E2E, e-mails só de teste (admin e contato); qualquer outro é ignorado. */
+export function exampleOnly(raw: string | null): string | null {
   return raw !== null && raw.endsWith('@example.com') ? raw : null;
+}
+
+/** O admin do E2E só pode ser uma conta de teste. */
+export const e2eAdminEmail = exampleOnly;
+
+/** `--static` exige uma porta só, explícita: o web e a API na mesma origem. */
+export function assertStaticPorts(env: Env): void {
+  const api = env.API_PORT?.trim() ?? '';
+  const web = env.WEB_PORT?.trim() ?? '';
+  if (api === '' || web === '' || api !== web || api === '0') {
+    throw new E2eStartError('Com --static, defina API_PORT e WEB_PORT iguais (uma porta só para o web e a API)');
+  }
 }
 
 export interface E2eOptions {
   env?: Env;
   logger?: FastifyServerOptions['logger'];
+  /** Linha de comando (padrão: process.argv). Os estáticos só ligam com --static. */
+  argv?: readonly string[];
+  /** Pasta do build do web com --static. Padrão: WEB_DIST_DIR. */
+  webDistDir?: string;
 }
 
 export async function startE2eServer(options: E2eOptions = {}): Promise<FastifyInstance> {
   // Cópia: este processo não lê o .env e não mexe no ambiente de quem chamou.
   const env: MutableEnv = { ...(options.env ?? process.env) };
   assertE2eEnvironment(env);
+  const serveStatic = (options.argv ?? process.argv).includes(STATIC_FLAG);
+  if (serveStatic) assertStaticPorts(env);
   const config = loadConfig(env, { dbPath: DEFAULT_DB_PATH });
   const auth = loadAuthConfig(env, { webPort: config.webPort });
   if (!isLoopbackOrigin(auth.appOrigin)) throw new E2eStartError('O servidor de E2E só aceita APP_ORIGIN em loopback');
@@ -69,6 +94,8 @@ export async function startE2eServer(options: E2eOptions = {}): Promise<FastifyI
   if (!guard.allowedOrigins.includes(auth.appOrigin.origin)) {
     throw new E2eStartError('APP_ORIGIN precisa ser uma das origens aceitas pelo guard');
   }
+
+  const webDist = serveStatic ? loadWebDist(options.webDistDir ?? WEB_DIST_DIR) : undefined;
 
   const db = openDatabase(config.dbPath);
   try {
@@ -85,8 +112,10 @@ export async function startE2eServer(options: E2eOptions = {}): Promise<FastifyI
     db,
     logger: options.logger ?? { level: 'warn' },
     guard,
+    webDist,
     // Sem agenda e sem Google, sempre.
     auth: { appOrigin: auth.appOrigin, adminEmail: e2eAdminEmail(auth.adminEmail), identity: null, devLogin: true },
+    info: { contactEmail: exampleOnly(auth.contactEmail), operatorName: auth.operatorName },
   });
   app.log.warn('Servidor de E2E: login de desenvolvimento LIGADO (só contas @example.com, banco temporário)');
   app.addHook('onClose', async () => {

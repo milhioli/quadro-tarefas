@@ -174,8 +174,10 @@ const positiveIdSchema = z
   .transform((value) => Number(value));
 export const boardIdParamsSchema = z.strictObject({ boardId: positiveIdSchema });
 export const memberParamsSchema = z.strictObject({ boardId: positiveIdSchema, userId: positiveIdSchema });
+export const userIdParamsSchema = z.strictObject({ userId: positiveIdSchema });
 
 export type UserRole = 'admin' | 'user';
+export type UserStatus = 'active' | 'disabled';
 export type BoardKind = 'personal' | 'group';
 export type MemberRole = 'owner' | 'editor';
 export type MemberStatus = 'invited' | 'active';
@@ -240,6 +242,44 @@ export interface ResetResponse {
   moved: number;
 }
 
+/**
+ * Linha da tela "Contas" do admin. Só o que o R10 permite: nada de quadro,
+ * tarefa, `sub` do Google nem data de criação.
+ */
+export interface AdminUser {
+  id: number;
+  /** null para quem entrou com o Google mas não criou o perfil. */
+  handle: string | null;
+  email: string;
+  status: UserStatus;
+  lastSeenAt: string;
+}
+
+export interface AdminUserListResponse {
+  users: AdminUser[];
+}
+
+/** `GET /api/info` (público): o que o rodapé e a página de privacidade mostram. */
+export interface PublicInfo {
+  contactEmail: string | null;
+  /** Quem responde pelo app (LGPD, art. 9º). */
+  operatorName: string | null;
+}
+
+/** A página de privacidade: o servidor a serve, e o web a escolhe pelo caminho. */
+export const PRIVACY_PATH = '/privacidade';
+
+/**
+ * Como o login Google terminou quando não deu certo: o servidor volta para
+ * `/?login=<resultado>`. Lista fechada, lida dos dois lados.
+ */
+export const LOGIN_OUTCOMES = Object.freeze(['erro', 'cancelado', 'indisponivel', 'limite', 'desativada'] as const);
+export type LoginOutcome = (typeof LOGIN_OUTCOMES)[number];
+
+export function isLoginOutcome(value: string): value is LoginOutcome {
+  return (LOGIN_OUTCOMES as readonly string[]).includes(value);
+}
+
 // ---------- Agenda da Apple (somente leitura) ----------
 
 /**
@@ -292,6 +332,9 @@ export type ApiErrorCode =
   | 'FORBIDDEN'
   | 'PAYLOAD_TOO_LARGE'
   | 'UNSUPPORTED_MEDIA_TYPE'
+  | 'RATE_LIMITED'
+  | 'REAUTH_REQUIRED'
+  | 'STORAGE_FULL'
   | 'INTERNAL';
 
 export interface ApiErrorBody {

@@ -26,6 +26,11 @@ describe('ProfileScreen', () => {
     expect(usernameInput()).toHaveValue('');
   });
 
+  it('tem o rodapé com o link da privacidade', () => {
+    renderProfile('Ana');
+    expect(screen.getByRole('link', { name: 'Privacidade' })).toHaveAttribute('href', '/privacidade');
+  });
+
   it('cria o perfil com o usuário em minúsculas e grava o me', async () => {
     const { api, user, queryClient } = renderProfile('Ana');
     await user.type(usernameInput(), ' Ana.Souza ');

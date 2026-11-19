@@ -1,16 +1,20 @@
 import type { BoardSummary } from '@quadro/shared';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { FAKE_ME, PERSONAL_BOARD, createFakeApi, makeTask } from '../test/fakeApi';
+import { FAKE_ADMIN_ACCOUNT, FAKE_INFO, FAKE_ME, PERSONAL_BOARD, createFakeApi, makeTask } from '../test/fakeApi';
 import { createTestQueryClient, createWrapper } from '../test/render';
 import {
   useAcceptInvite,
+  useAccounts,
   useBoards,
   useCreateBoard,
   useCreateProfile,
   useDeclineInvite,
+  useDeleteAccount,
   useDeleteBoard,
+  useDeleteDisabledAccount,
   useDevLogin,
+  useInfo,
   useInviteMember,
   useInvites,
   useLeaveBoard,
@@ -19,8 +23,9 @@ import {
   useMembers,
   useRemoveMember,
   useRenameBoard,
+  useSetAccountStatus,
 } from './account';
-import { BOARDS_KEY, INVITES_KEY, LOGGED_OUT, ME_KEY, membersKey, tasksKey } from './queries';
+import { ACCOUNTS_KEY, BOARDS_KEY, INVITES_KEY, LOGGED_OUT, ME_KEY, membersKey, tasksKey } from './queries';
 
 const GROUP: BoardSummary = { id: 9, name: 'Equipe', kind: 'group', role: 'owner' };
 
@@ -146,5 +151,62 @@ describe('convites recebidos', () => {
       [1, 'owner'],
       [9, 'editor'],
     ]);
+  });
+});
+
+describe('conta: informação pública e apagar a conta', () => {
+  it('useInfo lê o contato e o responsável', async () => {
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useInfo(), { wrapper });
+    await waitFor(() => expect(result.current.data).toEqual(FAKE_INFO));
+  });
+
+  it('apagar a conta zera o cache, grava o me sem sessão e chama o aviso', async () => {
+    const { api, queryClient, wrapper } = setup();
+    api.setMe({ ...FAKE_ME, user: { ...FAKE_ME.user!, role: 'user' } });
+    queryClient.setQueryData(tasksKey(1), [makeTask({ id: 1, title: 'Da conta apagada' })]);
+    const onDeleted = vi.fn();
+    const { result } = renderHook(() => useDeleteAccount(onDeleted), { wrapper });
+    await act(() => result.current.mutateAsync());
+    expect(onDeleted).toHaveBeenCalledOnce();
+    expect(queryClient.getQueryData(ME_KEY)).toEqual(LOGGED_OUT);
+    expect(queryClient.getQueryData(tasksKey(1))).toBeUndefined();
+  });
+
+  it('se o servidor recusar, nada muda no cache', async () => {
+    const { queryClient, wrapper } = setup();
+    queryClient.setQueryData(ME_KEY, FAKE_ME);
+    const onDeleted = vi.fn();
+    const { result } = renderHook(() => useDeleteAccount(onDeleted), { wrapper });
+    await act(async () => {
+      await expect(result.current.mutateAsync()).rejects.toMatchObject({ status: 409 });
+    });
+    expect(onDeleted).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(ME_KEY)).toEqual(FAKE_ME);
+  });
+});
+
+describe('admin: contas', () => {
+  const BIA = { id: 4, handle: 'bia_02', email: 'bia@example.com', status: 'active' as const, lastSeenAt: '2026-11-19T12:00:00.000Z' };
+
+  it('lista as contas; desativar troca o status da linha; apagar tira da lista', async () => {
+    const { api, queryClient, wrapper } = setup();
+    api.setAccounts([FAKE_ADMIN_ACCOUNT, BIA]);
+    const { result } = renderHook(
+      () => ({ list: useAccounts(), status: useSetAccountStatus(), remove: useDeleteDisabledAccount() }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.list.data).toHaveLength(2));
+    await act(() => result.current.status.mutateAsync({ userId: 4, status: 'disabled' }));
+    expect(queryClient.getQueryData<typeof BIA[]>(ACCOUNTS_KEY)?.find((a) => a.id === 4)?.status).toBe('disabled');
+    await act(() => result.current.remove.mutateAsync(4));
+    expect(queryClient.getQueryData<typeof BIA[]>(ACCOUNTS_KEY)?.map((a) => a.id)).toEqual([1]);
+  });
+
+  it('quem não é admin recebe 404 da lista', async () => {
+    const { api, wrapper } = setup();
+    api.setMe({ ...FAKE_ME, user: { ...FAKE_ME.user!, role: 'user' } });
+    const { result } = renderHook(() => useAccounts(), { wrapper });
+    await waitFor(() => expect(result.current.error?.status).toBe(404));
   });
 });

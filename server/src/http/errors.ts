@@ -24,6 +24,26 @@ export const needsUsername = (): HttpError =>
   new HttpError(403, 'NEEDS_USERNAME', 'Escolha um nome de usuário para continuar');
 export const conflict = (message = 'Esse horário já está ocupado'): HttpError =>
   new HttpError(409, 'CONFLICT', message);
+/** O 404 de rota desconhecida (as rotas de admin respondem igual para quem não é admin). */
+export const routeNotFound = (): HttpError => new HttpError(404, 'NOT_FOUND', 'Rota não encontrada');
+export const tooManyRequests = (): HttpError =>
+  new HttpError(429, 'RATE_LIMITED', 'Muitas ações em pouco tempo. Espere alguns minutos e tente de novo.');
+
+/** Teto estrutural atingido (grupos, membros, tarefas, conteúdo): 409 com a mensagem do teto. */
+export class LimitReachedError extends HttpError {
+  constructor(message: string) {
+    super(409, 'CONFLICT', message);
+    this.name = 'LimitReachedError';
+  }
+}
+
+/** O banco passou do tamanho máximo (QUADRO_DB_MAX_MB): criar e editar param; ler e apagar continuam. */
+export class StorageFullError extends HttpError {
+  constructor() {
+    super(503, 'STORAGE_FULL', 'O servidor está sem espaço para gravar agora. Tente de novo mais tarde.');
+    this.name = 'StorageFullError';
+  }
+}
 
 export function errorBody(code: ApiErrorCode, message: string, issues?: Issue[]): ApiErrorBody {
   return issues && issues.length > 0 ? { error: { code, message, issues } } : { error: { code, message } };
@@ -58,6 +78,7 @@ export function registerErrorHandling(app: FastifyInstance): void {
   });
 
   app.setNotFoundHandler((_request, reply) => {
-    return reply.status(404).send(errorBody('NOT_FOUND', 'Rota não encontrada'));
+    const { status, body } = toErrorResponse(routeNotFound());
+    return reply.status(status).send(body);
   });
 }

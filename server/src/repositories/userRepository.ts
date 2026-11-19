@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { formatHandle, type MeUser, type UserRole } from '@quadro/shared';
+import { formatHandle, type AdminUser, type MeUser, type UserRole, type UserStatus } from '@quadro/shared';
 import { nowIso, type Now } from '../clock';
 import { withTransaction } from '../db/transaction';
 
@@ -7,6 +7,8 @@ import { withTransaction } from '../db/transaction';
 export const DEV_SUB_PREFIX = 'dev:';
 export const LEGACY_BOARD_ID = 1;
 export const PERSONAL_BOARD_NAME = 'Meu quadro';
+/** A tela "Contas" mostra no máximo isso (sem paginação na 2b). */
+export const ADMIN_LIST_LIMIT = 500;
 
 export interface UserRecord {
   id: number;
@@ -16,7 +18,9 @@ export interface UserRecord {
   username: string | null;
   seq: number | null;
   role: UserRole;
-  status: 'active' | 'disabled';
+  status: UserStatus;
+  lastSeenAt: string;
+  disabledAt: string | null;
 }
 
 interface UserRow {
@@ -27,7 +31,9 @@ interface UserRow {
   username: string | null;
   seq: number | null;
   role: UserRole;
-  status: 'active' | 'disabled';
+  status: UserStatus;
+  last_seen_at: string;
+  disabled_at: string | null;
 }
 
 function toRecord(row: UserRow): UserRecord {
@@ -40,6 +46,8 @@ function toRecord(row: UserRow): UserRecord {
     seq: row.seq,
     role: row.role,
     status: row.status,
+    lastSeenAt: row.last_seen_at,
+    disabledAt: row.disabled_at,
   };
 }
 
@@ -75,6 +83,14 @@ export interface UserRepository {
   personalBoardId(id: number): number | null;
   findByHandle(username: string, seq: number): UserRecord | null;
   touch(id: number): void;
+  /** Tela "Contas" do admin: só handle, e-mail, status e último acesso (R10). */
+  listForAdmin(): AdminUser[];
+  /**
+   * Ativa ou desativa a conta. Desativar grava o `disabled_at` (a retenção
+   * apaga a conta depois de 12 meses) e apaga todas as sessões na hora.
+   * false se nada mudou.
+   */
+  setStatus(id: number, status: UserStatus): boolean;
   /** Quantos usuários existem que não são do login de desenvolvimento. */
   countNonDev(): number;
   toMe(user: UserRecord): MeUser | null;
@@ -100,6 +116,14 @@ export function createUserRepository(db: DatabaseSync, now: Now): UserRepository
     ),
     personal: db.prepare("SELECT id FROM boards WHERE owner_user_id = ? AND kind = 'personal'"),
     touch: db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?'),
+    listForAdmin: db.prepare(
+      'SELECT id, email, username, seq, status, last_seen_at FROM users ORDER BY last_seen_at DESC, id LIMIT ?',
+    ),
+    setStatus: db.prepare(
+      `UPDATE users SET status = ?, disabled_at = CASE WHEN ? = 'disabled' THEN ? ELSE NULL END
+       WHERE id = ? AND status <> ?`,
+    ),
+    deleteSessions: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
     countNonDev: db.prepare("SELECT COUNT(*) AS n FROM users WHERE google_sub NOT LIKE 'dev:%'"),
   };
 
@@ -159,6 +183,32 @@ export function createUserRepository(db: DatabaseSync, now: Now): UserRepository
 
     touch(id) {
       statements.touch.run(nowIso(now), id);
+    },
+
+    listForAdmin() {
+      const rows = statements.listForAdmin.all(ADMIN_LIST_LIMIT) as Array<{
+        id: number;
+        email: string;
+        username: string | null;
+        seq: number | null;
+        status: UserStatus;
+        last_seen_at: string;
+      }>;
+      return rows.map((row) => ({
+        id: row.id,
+        handle: row.username !== null && row.seq !== null ? formatHandle(row.username, row.seq) : null,
+        email: row.email,
+        status: row.status,
+        lastSeenAt: row.last_seen_at,
+      }));
+    },
+
+    setStatus(id, status) {
+      return withTransaction(db, () => {
+        const changed = Number(statements.setStatus.run(status, status, nowIso(now), id, status).changes) > 0;
+        if (changed && status === 'disabled') statements.deleteSessions.run(id);
+        return changed;
+      });
     },
 
     countNonDev() {

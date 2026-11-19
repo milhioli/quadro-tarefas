@@ -1,0 +1,40 @@
+# Caddy do deploy (Fase 2b, docs/deploy.md): TLS automático e proxy para o Node,
+# que escuta só em 127.0.0.1:3001 dentro do mesmo namespace de rede.
+{
+	# Sem API de administração.
+	admin off
+	# Teste local (https://localhost): não tenta instalar a CA no sistema do contêiner.
+	skip_install_trust
+	# Sem log de acesso. O log padrão (erros, inclusive do reverse_proxy) não leva o IP
+	# inteiro nem a query (o callback do Google traz code e state).
+	log default {
+		output stderr
+		format filter {
+			request>remote_ip ip_mask 16 32
+			request>client_ip ip_mask 16 32
+			request>uri regexp \?.*$ ""
+			request>headers>Cookie delete
+		}
+	}
+}
+
+{$APP_DOMAIN} {
+	request_body {
+		max_size 1MB
+	}
+
+	# Compressão só nos estáticos: nada de BREACH em respostas da API.
+	@estaticos not path /api/*
+	encode @estaticos zstd gzip
+
+	header {
+		# 0 no teste local (senão o navegador força https em todo http://localhost).
+		Strict-Transport-Security "max-age={$HSTS_MAX_AGE}"
+		-Server
+	}
+
+	# Sem trusted_proxies: o Caddy sobrescreve o X-Forwarded-For que vier do cliente,
+	# e o Node (trustProxy 127.0.0.1) confia só no que o Caddy grava. O Host do
+	# navegador segue intacto (o guard do Node confere o Host do APP_ORIGIN).
+	reverse_proxy 127.0.0.1:3001
+}

@@ -11,6 +11,7 @@ import {
   planPlacement,
   planReset,
   profileInputSchema,
+  type AdminUser,
   type AuthMethods,
   type BoardSummary,
   type CalendarWeekResponse,
@@ -18,6 +19,7 @@ import {
   type MeResponse,
   type MeUser,
   type Member,
+  type PublicInfo,
   type Task,
 } from '@quadro/shared';
 import { ApiError, type ApiClient } from '../api/client';
@@ -48,6 +50,15 @@ export const FAKE_USER: MeUser = Object.freeze({
 });
 export const FAKE_ME: MeResponse = Object.freeze({ user: FAKE_USER, pendingProfile: null });
 export const PERSONAL_BOARD: BoardSummary = Object.freeze({ id: 1, name: 'Meu quadro', kind: 'personal', role: 'owner' });
+export const FAKE_INFO: PublicInfo = Object.freeze({ contactEmail: 'contato@example.com', operatorName: 'Operador de Teste' });
+/** A linha do próprio admin na tela "Contas". */
+export const FAKE_ADMIN_ACCOUNT: AdminUser = Object.freeze({
+  id: 1,
+  handle: 'admin_00',
+  email: 'admin@example.com',
+  status: 'active',
+  lastSeenAt: T0,
+});
 
 export function makeTask(overrides: Partial<Task> & { id: number }): Task {
   const placed = overrides.day !== undefined && overrides.day !== null;
@@ -94,6 +105,10 @@ export interface FakeApi extends ApiClient {
   setInvites(invites: Invite[]): void;
   /** Conta que pode ser convidada pelo handle. */
   addPerson(person: FakePerson): void;
+  /** O que `GET /api/info` devolve (padrão: FAKE_INFO). */
+  setInfo(info: PublicInfo): void;
+  /** As contas da tela do admin (padrão: só a do admin). */
+  setAccounts(accounts: AdminUser[]): void;
 }
 
 function serverOrder(tasks: readonly Task[]): Task[] {
@@ -122,6 +137,23 @@ export function createFakeApi(initial: readonly Task[] = []): FakeApi {
   const people: FakePerson[] = [];
   let nextBoardId = 100;
   let nextSeq = 1;
+  let info: PublicInfo = structuredClone(FAKE_INFO);
+  let accounts: AdminUser[] = [structuredClone(FAKE_ADMIN_ACCOUNT)];
+
+  /** Como o servidor: para quem não é admin, a rota "não existe". */
+  function requireAdmin(): MeUser {
+    const user = signedIn();
+    if (user.role !== 'admin') throw new ApiError(404, 'NOT_FOUND', 'Rota não encontrada');
+    return user;
+  }
+
+  function otherAccount(userId: number): AdminUser {
+    const user = requireAdmin();
+    if (userId === user.id) throw new ApiError(409, 'CONFLICT', 'Você não pode mudar o status da própria conta');
+    const account = accounts.find((a) => a.id === userId);
+    if (!account) throw new ApiError(404, 'NOT_FOUND', 'Conta não encontrada');
+    return account;
+  }
 
   const copy = <T>(value: T): T => structuredClone(value);
   const notFound = (message = 'Tarefa não encontrada') => new ApiError(404, 'NOT_FOUND', message);
@@ -230,6 +262,12 @@ export function createFakeApi(initial: readonly Task[] = []): FakeApi {
     addPerson(person) {
       people.push(copy(person));
     },
+    setInfo(next) {
+      info = copy(next);
+    },
+    setAccounts(next) {
+      accounts = copy(next);
+    },
 
     // ---------- Tarefas ----------
 
@@ -331,6 +369,42 @@ export function createFakeApi(initial: readonly Task[] = []): FakeApi {
     async logout() {
       await enter('logout', []);
       me = { user: null, pendingProfile: null };
+    },
+
+    async getInfo() {
+      await enter('getInfo', []);
+      return copy(info);
+    },
+
+    async deleteAccount() {
+      await enter('deleteAccount', []);
+      const user = me.user;
+      if (!user && !me.pendingProfile) throw new ApiError(401, 'UNAUTHENTICATED', 'Entre para continuar');
+      if (user?.role === 'admin') {
+        throw new ApiError(409, 'CONFLICT', 'A conta de administrador não pode ser apagada pelo app.');
+      }
+      me = { user: null, pendingProfile: null };
+      boards = [];
+      tasks = [];
+    },
+
+    async listAccounts() {
+      await enter('listAccounts', []);
+      requireAdmin();
+      return copy(accounts);
+    },
+
+    async setAccountStatus(userId, status) {
+      await enter('setAccountStatus', [userId, status]);
+      const account = otherAccount(userId);
+      accounts = accounts.map((a) => (a.id === account.id ? { ...a, status } : a));
+    },
+
+    async deleteDisabledAccount(userId) {
+      await enter('deleteDisabledAccount', [userId]);
+      const account = otherAccount(userId);
+      if (account.status !== 'disabled') throw new ApiError(409, 'CONFLICT', 'Desative a conta antes de apagar');
+      accounts = accounts.filter((a) => a.id !== account.id);
     },
 
     async createProfile(input) {

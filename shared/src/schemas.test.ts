@@ -13,7 +13,11 @@ import {
   formatHandle,
   handleSchema,
   inviteInputSchema,
+  isLoginOutcome,
+  LOGIN_OUTCOMES,
   memberParamsSchema,
+  PRIVACY_PATH,
+  userIdParamsSchema,
   moveBodySchema,
   parseHandle,
   profileInputSchema,
@@ -160,6 +164,22 @@ describe('contas: nome de usuário, nome de exibição e handle', () => {
     expect(boardIdParamsSchema.parse({ boardId: '12' })).toEqual({ boardId: 12 });
     expect(boardIdParamsSchema.safeParse({ boardId: '012' }).success).toBe(false);
     expect(memberParamsSchema.parse({ boardId: '1', userId: '2' })).toEqual({ boardId: 1, userId: 2 });
+    expect(userIdParamsSchema.parse({ userId: '7' })).toEqual({ userId: 7 });
+    for (const userId of ['0', '07', '-1', 'abc', '']) {
+      expect(userIdParamsSchema.safeParse({ userId }).success, userId).toBe(false);
+    }
+    expect(userIdParamsSchema.safeParse({ userId: '7', extra: '1' }).success).toBe(false);
+  });
+
+  it('resultados do login: lista fechada, igual para o servidor e o web', () => {
+    expect([...LOGIN_OUTCOMES]).toEqual(['erro', 'cancelado', 'indisponivel', 'limite', 'desativada']);
+    expect(Object.isFrozen(LOGIN_OUTCOMES)).toBe(true);
+    for (const outcome of LOGIN_OUTCOMES) expect(isLoginOutcome(outcome)).toBe(true);
+    for (const value of ['', 'ERRO', 'conta-apagada', 'ok', 'erro ']) expect(isLoginOutcome(value), value).toBe(false);
+  });
+
+  it('a página de privacidade tem um caminho fixo', () => {
+    expect(PRIVACY_PATH).toBe('/privacidade');
   });
 
   it('login de desenvolvimento aceita só e-mails @example.com e nada além do e-mail', () => {

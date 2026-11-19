@@ -1,8 +1,18 @@
-import type { AuthMethods, BoardSummary, Invite, MeResponse, Member } from '@quadro/shared';
+import type { AdminUser, AuthMethods, BoardSummary, Invite, MeResponse, Member, PublicInfo, UserStatus } from '@quadro/shared';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useApi } from './ApiContext';
 import type { ApiError, ProfileInput } from './client';
-import { AUTH_METHODS_KEY, BOARDS_KEY, INVITES_KEY, LOGGED_OUT, ME_KEY, membersKey, resetSession } from './queries';
+import {
+  ACCOUNTS_KEY,
+  AUTH_METHODS_KEY,
+  BOARDS_KEY,
+  INFO_KEY,
+  INVITES_KEY,
+  LOGGED_OUT,
+  ME_KEY,
+  membersKey,
+  resetSession,
+} from './queries';
 
 // ---------- Sessão ----------
 
@@ -34,6 +44,25 @@ export function useLogout(onLoggedOut?: () => void) {
     mutationFn: () => api.logout(),
     onSuccess: () => {
       onLoggedOut?.();
+      resetSession(queryClient, LOGGED_OUT);
+    },
+  });
+}
+
+/** Contato e responsável (público): não muda enquanto o app está aberto. */
+export function useInfo() {
+  const api = useApi();
+  return useQuery<PublicInfo, ApiError>({ queryKey: INFO_KEY, queryFn: () => api.getInfo(), staleTime: Infinity });
+}
+
+/** Apagar a própria conta: depois, o cache é zerado como no "Sair". */
+export function useDeleteAccount(onDeleted?: () => void) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation<void, ApiError, void>({
+    mutationFn: () => api.deleteAccount(),
+    onSuccess: () => {
+      onDeleted?.();
       resetSession(queryClient, LOGGED_OUT);
     },
   });
@@ -163,6 +192,45 @@ export function useDeclineInvite() {
     mutationFn: (boardId) => api.declineInvite(boardId),
     onSuccess: (_data, boardId) => {
       queryClient.setQueryData<Invite[]>(INVITES_KEY, (old) => old?.filter((i) => i.boardId !== boardId));
+    },
+  });
+}
+
+// ---------- Admin: contas ----------
+
+/**
+ * Tela "Contas" (só o admin; o servidor responde 404 para os demais). Cada
+ * busca grava auditoria: nada de refazer no foco, e os e-mails saem da memória
+ * assim que o modal fecha (gcTime 0).
+ */
+export function useAccounts() {
+  const api = useApi();
+  return useQuery<AdminUser[], ApiError>({
+    queryKey: ACCOUNTS_KEY,
+    queryFn: () => api.listAccounts(),
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+  });
+}
+
+export function useSetAccountStatus() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation<void, ApiError, { userId: number; status: UserStatus }>({
+    mutationFn: ({ userId, status }) => api.setAccountStatus(userId, status),
+    onSuccess: (_data, { userId, status }) => {
+      queryClient.setQueryData<AdminUser[]>(ACCOUNTS_KEY, (old) => old?.map((a) => (a.id === userId ? { ...a, status } : a)));
+    },
+  });
+}
+
+export function useDeleteDisabledAccount() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation<void, ApiError, number>({
+    mutationFn: (userId) => api.deleteDisabledAccount(userId),
+    onSuccess: (_data, userId) => {
+      queryClient.setQueryData<AdminUser[]>(ACCOUNTS_KEY, (old) => old?.filter((a) => a.id !== userId));
     },
   });
 }

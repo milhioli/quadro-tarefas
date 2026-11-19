@@ -12,10 +12,11 @@ import {
 } from '@quadro/shared';
 import type { FastifyInstance } from 'fastify';
 import { requireMember } from '../auth/access';
-import { HttpError, forbidden, notFound } from '../http/errors';
+import { HttpError, forbidden, notFound, tooManyRequests } from '../http/errors';
+import type { Limiters } from '../http/rateLimit';
 import { validate } from '../http/validate';
 import type { AuditRepository } from '../repositories/auditRepository';
-import type { BoardRepository } from '../repositories/boardRepository';
+import type { BoardRepository, InviteOutcome } from '../repositories/boardRepository';
 import type { TaskStore } from '../repositories/taskRepository';
 import { hasProfile, type UserRecord, type UserRepository } from '../repositories/userRepository';
 import { withMoveErrors } from './tasks';
@@ -25,10 +26,20 @@ export interface BoardRouteDeps {
   store: TaskStore;
   users: UserRepository;
   audit: AuditRepository;
+  limits: Pick<Limiters, 'groupCreate' | 'invite'>;
 }
 
 /** Handle inexistente, conta desativada ou sem perfil: a mesma resposta (não revela quem existe). */
 const UNKNOWN_HANDLE = 'Nenhuma conta com esse nome de usuário';
+
+/** Convite que não foi criado: a mensagem de cada caso (o bloqueio é neutro de propósito). */
+const INVITE_REFUSALS: Readonly<Record<Exclude<InviteOutcome, 'created'>, string>> = Object.freeze({
+  'already-member': 'Essa pessoa já está no quadro ou já foi convidada',
+  blocked: 'Não é possível convidar essa pessoa agora.',
+  'pending-pair': 'Essa pessoa já tem um convite seu esperando resposta.',
+  'board-full': 'Este grupo chegou ao limite de 50 pessoas.',
+  'too-many-pending': 'Este grupo já tem 20 convites esperando resposta. Espere alguém responder para convidar mais.',
+});
 
 export function registerBoardRoutes(app: FastifyInstance, deps: BoardRouteDeps): void {
   const userOf = (request: { user: UserRecord | null }) => request.user as UserRecord;
@@ -42,6 +53,7 @@ export function registerBoardRoutes(app: FastifyInstance, deps: BoardRouteDeps):
   app.post('/api/boards', async (request, reply) => {
     const user = userOf(request);
     const { name } = validate(boardInputSchema, request.body);
+    if (!deps.limits.groupCreate.hit(String(user.id))) throw tooManyRequests();
     const board: BoardSummary = deps.boards.createGroup(user.id, name);
     deps.audit.record(user.id, 'board.create', { kind: 'board', id: board.id });
     return reply.status(201).send(board);
@@ -114,12 +126,13 @@ export function registerBoardRoutes(app: FastifyInstance, deps: BoardRouteDeps):
       throw new HttpError(400, 'VALIDATION', 'O quadro pessoal não aceita membros. Crie um grupo para convidar alguém.');
     }
     const { handle } = validate(inviteInputSchema, request.body);
+    // Conta antes de buscar o handle: tentativas com handle inexistente também gastam (limita a varredura).
+    if (!deps.limits.invite.hit(String(user.id))) throw tooManyRequests();
     const invitee = deps.users.findByHandle(handle.username, handle.seq);
     if (!invitee || invitee.status !== 'active' || !hasProfile(invitee)) throw notFound(UNKNOWN_HANDLE);
     if (invitee.id === user.id) throw new HttpError(400, 'VALIDATION', 'Você já está neste quadro');
-    if (deps.boards.invite(boardId, user.id, invitee.id) === 'already-member') {
-      throw new HttpError(409, 'CONFLICT', 'Essa pessoa já está no quadro ou já foi convidada');
-    }
+    const outcome = deps.boards.invite(boardId, user.id, invitee.id);
+    if (outcome !== 'created') throw new HttpError(409, 'CONFLICT', INVITE_REFUSALS[outcome]);
     deps.audit.record(user.id, 'invite.create', { kind: 'board', id: boardId });
     const member = deps.boards.members(boardId).find((m) => m.userId === invitee.id);
     return reply.status(201).send(member);
@@ -130,11 +143,12 @@ export function registerBoardRoutes(app: FastifyInstance, deps: BoardRouteDeps):
     const { boardId, userId } = validate(memberParamsSchema, request.params);
     const membership = requireMember(deps.boards, boardId, user.id);
     if (userId === user.id) {
-      // Sair do quadro. O dono não sai: apaga o grupo (passar a posse é da 2b).
+      // Sair do quadro. O dono não sai: apaga o grupo (ou, ao apagar a conta, o grupo passa ao membro mais antigo).
       if (membership.role === 'owner') {
         throw new HttpError(409, 'CONFLICT', 'O dono não pode sair do quadro. Apague o grupo se ele não for mais usado.');
       }
-      deps.boards.removeMember(boardId, userId);
+      // Quem sai não recebe outro convite do dono por 30 dias.
+      deps.boards.leave(boardId, userId);
       deps.audit.record(user.id, 'member.leave', { kind: 'board', id: boardId });
       return reply.status(204).send();
     }

@@ -1,11 +1,13 @@
 import {
-  CLIENT_HEADERS,
   accountEmail,
   boardSelect,
+  clientHeaders,
   createTask,
   deckRegion,
   expect,
+  httpStatusConsoleError,
   openAs,
+  signIn,
   taskCard,
   test,
 } from './fixtures';
@@ -112,9 +114,9 @@ test('IDOR: a tarefa de outra pessoa não é lida nem alterada pelo id', async (
   try {
     const read = await bia.context.request.get(`/api/tasks/${mine.id}`);
     expect(read.status()).toBe(404);
-    const patch = await bia.context.request.patch(`/api/tasks/${mine.id}`, { headers: CLIENT_HEADERS, data: { title: 'Invadida' } });
+    const patch = await bia.context.request.patch(`/api/tasks/${mine.id}`, { headers: clientHeaders(), data: { title: 'Invadida' } });
     expect(patch.status()).toBe(404);
-    const removal = await bia.context.request.delete(`/api/tasks/${mine.id}`, { headers: CLIENT_HEADERS });
+    const removal = await bia.context.request.delete(`/api/tasks/${mine.id}`, { headers: clientHeaders() });
     expect(removal.status()).toBe(404);
     expect((await request.get(`/api/tasks/${mine.id}`)).status()).toBe(200);
   } finally {
@@ -131,4 +133,126 @@ test('mutação com o Origin de outro projeto local é recusada mesmo com a sess
   expect(response.status()).toBe(403);
   const boards = (await (await request.get('/api/boards')).json()) as { boards: Array<{ name: string }> };
   expect(boards.boards.map((board) => board.name)).toEqual(['Meu quadro']);
+});
+
+// ---------- Fase 2b: apagar a conta e a tela "Contas" do admin ----------
+
+test('apagar a conta: o grupo passa para quem participa, e a tela de entrada avisa', async ({
+  page,
+  request,
+  browser,
+  account,
+  consoleErrors,
+}, testInfo) => {
+  // Depois de apagar, uma busca que ainda estivesse em voo receberia 401 (a sessão acabou).
+  consoleErrors.allow(httpStatusConsoleError(401));
+  const bia = await openAs(browser, testInfo, 'b', { username: 'bia', displayName: 'Bia' });
+  try {
+    const createGroup = async (name: string) => {
+      const response = await request.post('/api/boards', { headers: clientHeaders(), data: { name } });
+      expect(response.status()).toBe(201);
+      return ((await response.json()) as { id: number }).id;
+    };
+    const shared = await createGroup('Equipe que fica');
+    const solo = await createGroup('Só meu');
+    await createTask(request, { title: 'Tarefa do grupo' }, shared);
+    const invited = await request.post(`/api/boards/${shared}/invites`, {
+      headers: clientHeaders(),
+      data: { handle: bia.account.handle },
+    });
+    expect(invited.status()).toBe(201);
+    expect((await bia.context.request.post(`/api/invites/${shared}/accept`, { headers: clientHeaders() })).status()).toBe(200);
+
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Minha conta' }).click();
+    await page.getByRole('dialog', { name: 'Minha conta' }).getByRole('button', { name: 'Apagar minha conta' }).click();
+    const confirm = page.getByRole('alertdialog', { name: 'Apagar sua conta?' });
+    await expect(confirm.getByText('Equipe que fica, Só meu')).toBeVisible();
+    const deleteButton = confirm.getByRole('button', { name: 'Apagar minha conta' });
+    await expect(deleteButton).toBeDisabled();
+    await confirm.getByRole('textbox', { name: /Para confirmar/ }).fill(account?.handle ?? '');
+    await deleteButton.click();
+
+    await expect(page.getByText('Sua conta foi apagada.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Entrar (teste)' })).toBeVisible();
+    expect(await (await request.get('/api/me')).json()).toEqual({ user: null, pendingProfile: null });
+
+    // O grupo com outra pessoa passou para ela, com a tarefa; o grupo só da pessoa sumiu.
+    const boards = (await (await bia.context.request.get('/api/boards')).json()) as {
+      boards: Array<{ id: number; role: string }>;
+    };
+    expect(boards.boards.find((b) => b.id === shared)?.role).toBe('owner');
+    const tasks = (await (await bia.context.request.get(`/api/boards/${shared}/tasks`)).json()) as { tasks: Array<{ title: string }> };
+    expect(tasks.tasks.map((t) => t.title)).toEqual(['Tarefa do grupo']);
+    expect(boards.boards.some((b) => b.id === solo)).toBe(false);
+
+    // Entrar de novo com o mesmo e-mail começa uma conta nova (primeiro acesso).
+    const again = await request.post('/api/auth/dev/login', { headers: clientHeaders(), data: { email: account?.email } });
+    expect((await again.json()) as { user: unknown }).toMatchObject({ user: null });
+    expect(bia.consoleErrors, 'erros no console do navegador da Bia').toEqual([]);
+  } finally {
+    await bia.context.close();
+  }
+});
+
+test('quem não é admin não vê "Contas", e a rota responde como se não existisse', async ({ page, request }) => {
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Minha conta' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Contas' })).toHaveCount(0);
+  const response = await request.get('/api/admin/users', { headers: clientHeaders() });
+  expect(response.status()).toBe(404);
+});
+
+test.describe('admin', () => {
+  test.use({ loggedIn: false });
+
+  test('desativa uma conta (a sessão cai na hora), reativa, e apaga a conta desativada', async ({ page, browser }, testInfo) => {
+    await signIn(page.request, 'admin@example.com', { username: 'chefe', displayName: 'Admin E2E' });
+    const bia = await openAs(browser, testInfo, 'b', { username: 'bia', displayName: 'Bia' });
+    try {
+      const handle = bia.account.handle;
+      await bia.page.goto('/');
+      await expect(bia.page.getByRole('button', { name: 'Minha conta' })).toBeVisible();
+
+      await page.goto('/');
+      await page.getByRole('button', { name: 'Contas' }).click();
+      const accounts = page.getByRole('dialog', { name: 'Contas' });
+      const own = accounts.getByRole('listitem').filter({ hasText: 'Você' });
+      await expect(own).toHaveCount(1);
+      await expect(own.getByRole('button')).toHaveCount(0);
+
+      await accounts.getByRole('button', { name: `Desativar ${handle}` }).click();
+      await page.getByRole('alertdialog', { name: `Desativar ${handle}?` }).getByRole('button', { name: 'Desativar' }).click();
+      await expect(accounts.getByRole('button', { name: `Reativar ${handle}` })).toBeVisible();
+
+      // A sessão da Bia acabou: recarregar leva ao login, e o login de teste é recusado.
+      await bia.page.reload();
+      await expect(bia.page.getByRole('button', { name: 'Entrar (teste)' })).toBeVisible();
+      const refused = await bia.context.request.post('/api/auth/dev/login', {
+        headers: clientHeaders(),
+        data: { email: bia.account.email },
+      });
+      expect(refused.status()).toBe(403);
+
+      await accounts.getByRole('button', { name: `Reativar ${handle}` }).click();
+      await expect(accounts.getByRole('button', { name: `Desativar ${handle}` })).toBeVisible();
+      const back = await bia.context.request.post('/api/auth/dev/login', {
+        headers: clientHeaders(),
+        data: { email: bia.account.email },
+      });
+      expect(back.status()).toBe(200);
+
+      // Apagar só vale para conta desativada.
+      await accounts.getByRole('button', { name: `Desativar ${handle}` }).click();
+      await page.getByRole('alertdialog', { name: `Desativar ${handle}?` }).getByRole('button', { name: 'Desativar' }).click();
+      await accounts.getByRole('button', { name: `Apagar ${handle}` }).click();
+      await page.getByRole('alertdialog', { name: `Apagar ${handle}?` }).getByRole('button', { name: 'Apagar conta' }).click();
+      await expect(accounts.getByText(handle, { exact: true })).toHaveCount(0);
+
+      const unexpected = bia.consoleErrors.filter((text) => !httpStatusConsoleError(401).test(text));
+      expect(unexpected, 'erros no console do navegador da Bia').toEqual([]);
+    } finally {
+      await bia.context.close();
+    }
+  });
 });

@@ -2,6 +2,8 @@ import {
   CLIENT_HEADER,
   CLIENT_HEADER_VALUE,
   isMondayIsoDate,
+  type AdminUser,
+  type AdminUserListResponse,
   type ApiErrorBody,
   type ApiErrorCode,
   type AuthMethods,
@@ -15,10 +17,12 @@ import {
   type Member,
   type MemberListResponse,
   type MoveTarget,
+  type PublicInfo,
   type ResetResponse,
   type Task,
   type TaskListResponse,
   type UpdateTaskInput,
+  type UserStatus,
 } from '@quadro/shared';
 
 export type ClientErrorCode = ApiErrorCode | 'NETWORK' | 'UNKNOWN';
@@ -66,6 +70,16 @@ export interface ApiClient {
   devLogin(email: string): Promise<MeResponse>;
   logout(): Promise<void>;
   createProfile(input: ProfileInput): Promise<MeResponse>;
+  /** Contato e responsável (público: rodapé e /privacidade). */
+  getInfo(): Promise<PublicInfo>;
+  /** Apaga a própria conta. Exige uma sessão recém-aberta (REAUTH_REQUIRED). */
+  deleteAccount(): Promise<void>;
+
+  // Admin (o servidor responde 404 para quem não é admin)
+  listAccounts(): Promise<AdminUser[]>;
+  setAccountStatus(userId: number, status: UserStatus): Promise<void>;
+  /** Só conta já desativada. */
+  deleteDisabledAccount(userId: number): Promise<void>;
 
   // Quadros, membros e convites
   listBoards(): Promise<BoardSummary[]>;
@@ -90,6 +104,7 @@ export interface ApiClientOptions {
 
 export const NETWORK_MESSAGE = 'Não foi possível falar com o servidor. Verifique se a API está rodando.';
 export const UNKNOWN_MESSAGE = 'Algo deu errado. Tente novamente.';
+export const RATE_LIMITED_MESSAGE = 'Muitas ações em pouco tempo. Espere alguns minutos e tente de novo.';
 
 function isApiErrorBody(value: unknown): value is ApiErrorBody {
   if (typeof value !== 'object' || value === null) return false;
@@ -125,6 +140,10 @@ function boardPath(boardId: number, suffix = ''): string {
 
 function invitePath(boardId: number, action: 'accept' | 'decline'): string {
   return `/api/invites/${checkId(boardId, 'de quadro')}/${action}`;
+}
+
+function adminUserPath(userId: number, action: 'disable' | 'enable' | 'delete'): string {
+  return `/api/admin/users/${checkId(userId, 'de pessoa')}/${action}`;
 }
 
 export function createApiClient(options: ApiClientOptions = {}): ApiClient {
@@ -168,6 +187,8 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           parseIssues(payload.error.issues),
         );
       }
+      // 429 sem o corpo da API (ex.: um proxy na frente): a mesma mensagem do servidor.
+      if (response.status === 429) throw new ApiError(429, 'RATE_LIMITED', RATE_LIMITED_MESSAGE);
       throw new ApiError(response.status, 'UNKNOWN', UNKNOWN_MESSAGE);
     }
     if (payload === null) throw new ApiError(response.status, 'UNKNOWN', 'Resposta inválida do servidor');
@@ -219,6 +240,24 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     },
     async createProfile(input) {
       return request<MeResponse>('POST', '/api/me/profile', input);
+    },
+    async getInfo() {
+      return request<PublicInfo>('GET', '/api/info');
+    },
+    async deleteAccount() {
+      // Sem corpo: o Fastify recusa JSON vazio.
+      await request<void>('DELETE', '/api/me');
+    },
+
+    async listAccounts() {
+      // A listagem grava auditoria: o servidor exige o header do cliente também no GET.
+      return (await request<AdminUserListResponse>('GET', '/api/admin/users', undefined, true)).users;
+    },
+    async setAccountStatus(userId, status) {
+      await request<void>('POST', adminUserPath(userId, status === 'disabled' ? 'disable' : 'enable'));
+    },
+    async deleteDisabledAccount(userId) {
+      await request<void>('POST', adminUserPath(userId, 'delete'));
     },
 
     async listBoards() {

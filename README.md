@@ -1,6 +1,6 @@
 # Quadro de tarefas
 
-Quadro semanal de tarefas, em pt-BR, com contas e grupos. Por enquanto roda só na própria máquina (`127.0.0.1`).
+Quadro semanal de tarefas, em pt-BR, com contas e grupos. No desenvolvimento roda só na própria máquina (`127.0.0.1`). Para publicar, há um pacote de deploy com Docker, HTTPS e backup (veja "Deploy").
 
 - **Contas:** cada pessoa entra com Google e escolhe um nome de usuário. O sistema acrescenta um número, e o resultado (ex.: `ana_07`) é o nome pelo qual os outros a encontram.
 - **Quadros:** cada conta tem o seu quadro pessoal. Um **grupo** tem um quadro compartilhado: quem criou convida pelo nome de usuário, e a pessoa aceita ou recusa.
@@ -18,6 +18,9 @@ Quadro semanal de tarefas, em pt-BR, com contas e grupos. Por enquanto roda só 
 - **Feriados** aparecem como **bolinhas** no topo e nos cabeçalhos dos dias: vermelha para feriado nacional, azul para ponto facultativo (Carnaval e Corpus Christi). Clicar numa bolinha abre o modal com os feriados.
 - **Resetar quadro** devolve todas as tarefas ao deck, sem apagar nenhuma.
 - Cada tarefa abre um modal com título, cor e um editor rico com títulos, listas, **checklist**, citação e desfazer/refazer.
+- **Minha conta:** mostra quem está logado e permite **apagar a própria conta**. Os grupos que a pessoa criou passam para quem participa deles há mais tempo.
+- **Contas** (só o admin, `_00`): lista as contas, desativa, reativa e apaga uma conta desativada. O admin não vê os quadros de ninguém.
+- **Privacidade:** a página `/privacidade` abre sem login e diz o que é guardado, por quanto tempo e como falar com o responsável. O link fica no rodapé.
 
 ## Requisitos
 
@@ -96,7 +99,7 @@ Em telas de até 768 px, o quadro com arraste dá lugar a uma **agenda por toque
 
 As tarefas sem horário ficam em "Sem horário", no fim. Para agendar ou mudar o horário, toque na tarefa e use o campo **Quando**.
 
-**Como abrir no celular:** o app só aceita conexões da própria máquina (`127.0.0.1`). Ele já tem login, mas ainda não tem HTTPS nem as proteções para ficar exposto na rede (isso é da fase 2b do `docs/roteiro.md`). Por isso, abrir pelo Wi-Fi continua proibido. Há duas formas:
+**Como abrir no celular (no desenvolvimento):** o `npm run dev` só aceita conexões da própria máquina (`127.0.0.1`). Ele não tem HTTPS nem as proteções da rede, que só existem no pacote de deploy. Por isso, abrir pelo Wi-Fi continua proibido. Há duas formas:
 
 - Numa janela estreita no computador, ou no modo dispositivo do DevTools.
 - No celular Android ligado por cabo USB, com `adb reverse tcp:5173 tcp:5173`, abrindo `http://127.0.0.1:5173` no celular. Enquanto o `adb reverse` estiver ativo, os outros apps do celular também alcançam essa porta.
@@ -132,7 +135,7 @@ Se a senha for recusada, o topo mostra "A Apple recusou a senha de app" e o app 
 ```sh
 npm test            # Vitest: shared, server e web
 npm run typecheck   # TypeScript nos três pacotes e no e2e
-npm run test:e2e    # Playwright no navegador (desktop e celular)
+npm run test:e2e    # Playwright no navegador (desktop, celular e o build de produção)
 ```
 
 - Os testes da API usam SQLite real em arquivo temporário.
@@ -141,7 +144,21 @@ npm run test:e2e    # Playwright no navegador (desktop e celular)
   - antes da primeira vez, rode `npx playwright install chromium`;
   - o teste sobe o próprio servidor (`npm run dev:e2e`) nas portas 3101/5273, com um banco temporário, então dá para rodar com o seu `npm run dev` aberto;
   - esse servidor troca o Google por um login de teste que só aceita e-mails `@example.com`, e nunca liga a agenda. Cada teste entra com uma conta nova;
+  - o projeto `producao` sobe um segundo servidor (`npm run dev:e2e:static`, porta 3201) com o build do web servido pelo próprio Fastify. É lá que a CSP estrita do HTML é exercida; cada execução refaz o build;
   - para ver o relatório, use `npx playwright show-report e2e/playwright-report`.
+
+## Deploy
+
+O pacote fica em `deploy/`: Caddy (TLS automático), o app em Docker e o Litestream (backup contínuo do SQLite). O passo a passo completo está em `docs/deploy.md`: como testar localmente em `https://localhost` e o checklist da VPS, do bucket e da restauração. O plano de incidente está em `docs/incidente.md`.
+
+```sh
+npm run build      # build do web (web/dist)
+npm start          # servidor de produção (node --import tsx); exige NODE_ENV=production e APP_ORIGIN https
+```
+
+- O arquivo de ambiente do deploy fica fora do repositório (veja `deploy/.env.example`) e vai sempre por `--env-file`.
+- No Google, o deploy usa um client OAuth próprio, com o redirect `https://<domínio>/api/auth/google/callback`. O teste local usa `https://localhost/api/auth/google/callback`.
+- Em produção, o servidor recusa a agenda da Apple global. A agenda por pessoa é a Fase 4.
 
 ## Estrutura
 
@@ -149,19 +166,24 @@ npm run test:e2e    # Playwright no navegador (desktop e celular)
 shared/   regras puras e validação (slots, dias, cores, schemas zod, movimentos, whitelist do conteúdo rico)
 server/   API Fastify + SQLite (node:sqlite), guard de Host/Origin, login e sessão, rotas e repositórios
 web/      React + Vite: login, quadros e grupos, deck, quadro, calendário, modal da tarefa e editor TipTap
+deploy/   Dockerfile, compose (Caddy, app e Litestream), Caddyfile e configs do Litestream
 ```
 
 ## Segurança
 
-O app é pensado para **uso local, em `127.0.0.1`, com login Google e quadros compartilhados entre as contas desta máquina**.
+No desenvolvimento, o app roda **só em `127.0.0.1`**. Publicado, ele roda **atrás do Caddy com HTTPS**, pelo pacote de `deploy/`.
 
-- **Só loopback:** a API e o Vite escutam apenas em `127.0.0.1`. Abrir para a rede (Wi-Fi, túnel ou o Vite escutando fora do loopback) exige HTTPS, limites de uso e as outras proteções da fase 2b, que ainda não existem.
+- **Só loopback:** a API e o Vite escutam apenas em `127.0.0.1`, inclusive no deploy, onde o Node fica no mesmo namespace de rede do Caddy. Nunca exponha o `npm run dev` nem o Vite (Wi-Fi, túnel, outra interface).
+- **Modo público:** só com `NODE_ENV=production` **e** `APP_ORIGIN` https. Ele recusa subir sem o login Google, o admin, o contato de privacidade e o responsável, e recusa a agenda global.
+- **Limites:** há limites de tentativas de login e de contas novas (por IP, por conta Google e no total), de ações por pessoa, de grupos e de convites. Também há tetos de grupos, membros, tarefas e conteúdo, e um disjuntor de disco. Um convite recusado bloqueia o reconvite por 30 dias.
+- **Retenção:** um job diário apaga sessões vencidas, a auditoria com mais de 180 dias, convites sem resposta, contas sem perfil, contas desativadas há 12 meses e contas sem uso há 24 meses. Os prazos estão na `/privacidade`.
 - **Login:**
   - O login Google usa authorization code com PKCE, `state` e `nonce`, guardados no servidor por 10 minutos.
   - A assinatura do ID token é conferida pelas chaves do Google, e só entra e-mail verificado.
   - O endereço de volta sai do `APP_ORIGIN`, nunca do `Host` da requisição.
 - **Sessão:**
-  - O cookie é `HttpOnly` e `SameSite=Lax`, com um token aleatório de 256 bits. O banco guarda só o sha256 dele.
+  - O cookie é `HttpOnly` e `SameSite=Lax`, com um token aleatório de 256 bits. O banco guarda só o sha256 dele. No deploy, ele vira `__Host-quadro_session`, com `Secure`.
+  - Apagar a conta exige uma sessão aberta há no máximo 10 minutos.
   - A sessão vence com 30 dias sem uso ou 90 dias no total. Conta desativada perde o acesso na hora.
   - Toda rota exige sessão, menos uma lista fechada que é conferida em teste.
 - **Acesso aos quadros:** é decidido no servidor, pela lista de membros. A tarefa de um quadro que não é seu responde 404, igual a uma que não existe.
@@ -173,6 +195,8 @@ O app é pensado para **uso local, em `127.0.0.1`, com login Google e quadros co
   - Toda mutação exige o header `X-Quadro-Client: 1`, o que força preflight e bloqueia CSRF.
 - **CORS:** está desligado no Vite e não existe na API.
 - **Headers:** a API e o Vite respondem com `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` e CSP com `frame-ancestors 'none'`.
+  - No deploy, o HTML recebe uma CSP estrita (`default-src 'self'`, sem nada inline), e toda resposta leva COOP e CORP `same-origin`.
+  - O HSTS vem do Caddy.
 - **Conteúdo rico:**
   - É gravado como JSON do ProseMirror validado por uma whitelist estrita de nós, marcas e atributos, com profundidade máxima de 32 e corpo de até 256 KiB.
   - Só é renderizado pelo próprio editor. Nenhum HTML é montado à mão.

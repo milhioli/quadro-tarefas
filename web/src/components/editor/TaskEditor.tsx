@@ -30,6 +30,9 @@ export function TaskEditor({ initialContent, onChange, labelledBy }: TaskEditorP
   const editor = useEditor({
     extensions,
     content: initialContent,
+    // A CSP do HTML (style-src 'self') bloqueia o <style> que o TipTap injetaria;
+    // as regras base do ProseMirror estão copiadas no app.css.
+    injectCSS: false,
     immediatelyRender: true,
     shouldRerenderOnTransaction: false,
     editorProps: {

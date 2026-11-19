@@ -28,6 +28,15 @@ function infoNotice(): HTMLElement {
 }
 
 describe('App', () => {
+  it('mostra a barra e o rodapé recebidos do Shell', async () => {
+    renderWithProviders(<App clock={clock} toolbar={<nav>Barra</nav>} footer={<footer>Rodapé</footer>} />, {
+      api: createFakeApi(),
+    });
+    expect(screen.getByText('Barra')).toBeInTheDocument();
+    expect(screen.getByRole('contentinfo')).toHaveTextContent('Rodapé');
+    await screen.findByRole('region', { name: 'Tarefas (0)' });
+  });
+
   it('carrega e mostra deck, quadro e calendário', async () => {
     setup();
     expect(screen.getByRole('status')).toHaveTextContent('Carregando tarefas…');

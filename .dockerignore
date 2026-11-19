@@ -1,0 +1,21 @@
+# Allowlist: o contexto do build é a raiz do repositório, então tudo começa de fora
+# (um ".env" aqui excluiria só o da raiz; o deploy/.env, o .git e o banco entrariam).
+*
+!package.json
+!package-lock.json
+!.npmrc
+!tsconfig.base.json
+!shared/
+!server/
+!web/
+
+# Nunca na imagem, mesmo dentro das pastas liberadas.
+**/.env
+**/.env.*
+**/node_modules
+server/data
+server/test
+web/dist
+web/src/test
+**/*.test.ts
+**/*.test.tsx

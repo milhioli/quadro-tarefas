@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createTempDb } from '../../test/helpers/tempDb';
 import { createTestApp, type TestApp } from '../../test/helpers/testApp';
 import { buildApp } from '../app';
-import { DEFAULT_GUARD_OPTIONS } from '../config';
+import { DEFAULT_GUARD_OPTIONS, publicGuardOptions } from '../config';
 import { isAllowedHost, isAllowedOrigin, isSafeMethod } from './guard';
 
 let t: TestApp | undefined;
@@ -37,6 +37,55 @@ describe('isAllowedHost', () => {
 
   it('rejeita Host ausente', () => {
     expect(isAllowedHost(undefined, DEFAULT_GUARD_OPTIONS)).toBe(false);
+  });
+});
+
+describe('guard no modo público (deploy)', () => {
+  const PUBLIC = publicGuardOptions(new URL('https://quadro.exemplo.com'));
+
+  it.each(['quadro.exemplo.com', 'QUADRO.Exemplo.com', ' quadro.exemplo.com '])('aceita o Host "%s"', (host) => {
+    expect(isAllowedHost(host, PUBLIC)).toBe(true);
+  });
+
+  it.each([
+    '127.0.0.1:3001',
+    'localhost:5173',
+    'quadro.exemplo.com:443',
+    'quadro.exemplo.com.evil.com',
+    'evil.quadro.exemplo.com',
+    'quadro.exemplo.co',
+    '',
+  ])('rejeita o Host "%s"', (host) => {
+    expect(isAllowedHost(host, PUBLIC)).toBe(false);
+  });
+
+  it('Origin: só o APP_ORIGIN, nunca as do Vite nem outra https', () => {
+    expect(isAllowedOrigin('https://quadro.exemplo.com', PUBLIC, true)).toBe(true);
+    for (const origin of ['http://127.0.0.1:5173', 'http://quadro.exemplo.com', 'https://evil.com', 'null']) {
+      expect(isAllowedOrigin(origin, PUBLIC, true), origin).toBe(false);
+    }
+  });
+
+  it('o guard lê o Host cru: X-Forwarded-Host não muda nada', async () => {
+    const temp = createTempDb();
+    const app = buildApp({ db: temp.db, guard: PUBLIC, auth: { appOrigin: 'https://quadro.exemplo.com' } });
+    try {
+      const forged = await app.inject({
+        method: 'GET',
+        url: '/api/health',
+        headers: { host: 'evil.com', 'x-forwarded-host': 'quadro.exemplo.com' },
+      });
+      expect(forged.statusCode).toBe(403);
+      const ok = await app.inject({
+        method: 'GET',
+        url: '/api/health',
+        headers: { host: 'quadro.exemplo.com', 'x-forwarded-host': 'evil.com' },
+      });
+      expect(ok.statusCode).toBe(200);
+    } finally {
+      await app.close();
+      temp.cleanup();
+    }
   });
 });
 
@@ -174,9 +223,13 @@ describe('guard na aplicação', () => {
       expect(mutating.map((r) => `${r.method} ${r.url}`).sort()).toEqual([
         'DELETE /api/boards/:boardId',
         'DELETE /api/boards/:boardId/members/:userId',
+        'DELETE /api/me',
         'DELETE /api/tasks/:id',
         'PATCH /api/boards/:boardId',
         'PATCH /api/tasks/:id',
+        'POST /api/admin/users/:userId/delete',
+        'POST /api/admin/users/:userId/disable',
+        'POST /api/admin/users/:userId/enable',
         'POST /api/auth/logout',
         'POST /api/boards',
         'POST /api/boards/:boardId/invites',
@@ -220,6 +273,7 @@ describe('negação por padrão (sessão)', () => {
     'GET /api/auth/google/start',
     'GET /api/auth/methods',
     'GET /api/health',
+    'GET /api/info',
     'GET /api/me',
     'POST /api/auth/dev/login',
   ];

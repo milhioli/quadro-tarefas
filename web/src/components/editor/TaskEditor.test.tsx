@@ -38,6 +38,12 @@ describe('TaskEditor', () => {
     expect(screen.getByRole('textbox', { name: 'Detalhes' })).toHaveAttribute('contenteditable', 'true');
   });
 
+  it('não injeta <style> no documento (a CSP do HTML bloquearia; as regras estão no app.css)', () => {
+    render(<TaskEditor initialContent={emptyDoc()} onChange={() => {}} />);
+    expect(screen.getByRole('textbox', { name: 'Detalhes da tarefa' })).toBeInTheDocument();
+    expect(document.querySelector('style[data-tiptap-style]')).toBeNull();
+  });
+
   it('sem rótulo externo usa "Detalhes da tarefa"', () => {
     render(<TaskEditor initialContent={emptyDoc()} onChange={() => {}} />);
     expect(screen.getByRole('textbox', { name: 'Detalhes da tarefa' })).toBeInTheDocument();

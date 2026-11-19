@@ -172,7 +172,7 @@ describe('migração 3: contas, quadros e membros', () => {
     const deleted = insertLegacy(temp.db, { day: null, slot: null, deck: 1, title: 'Apagada' }).lastInsertRowid;
     temp.db.prepare('DELETE FROM tasks WHERE id = ?').run(deleted);
 
-    expect(migrate(temp.db)).toBe(3);
+    expect(migrate(temp.db, MIGRATIONS.slice(0, 3))).toBe(3);
     const tasks = temp.db.prepare('SELECT id, board_id, title, created_by FROM tasks ORDER BY id').all();
     expect(tasks).toEqual([
       { id: 1, board_id: 1, title: 'Deck', created_by: null },
@@ -238,5 +238,67 @@ describe('migração 3: contas, quadros e membros', () => {
     temp.db.prepare('DELETE FROM users WHERE id = ?').run(ana);
     expect(temp.db.prepare('SELECT COUNT(*) AS n FROM boards WHERE id = ?').get(personal)).toEqual({ n: 0 });
     expect(temp.db.prepare('SELECT invited_by FROM board_members WHERE user_id = ?').get(bia)).toEqual({ invited_by: null });
+  });
+});
+
+describe('migração 4: bloqueio de reconvite, disabled_at e índices', () => {
+  const NOW = '2026-11-19T12:00:00.000Z';
+
+  function addUser(db: TempDb['db'], sub: string, status: 'active' | 'disabled' = 'active') {
+    return Number(
+      db
+        .prepare(
+          `INSERT INTO users (google_sub, email, display_name, username, seq, status, created_at, last_seen_at)
+           VALUES (?, ?, 'Nome', ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM users), ?, ?, ?)`,
+        )
+        .run(sub, `${sub}@example.com`, sub, status, NOW, NOW).lastInsertRowid,
+    );
+  }
+
+  it('converte um banco v3 com contas: a desativada ganha disabled_at, as outras ficam nulas', () => {
+    temp = createTempDb({ migrate: false });
+    migrate(temp.db, MIGRATIONS.slice(0, 3));
+    const ana = addUser(temp.db, 'ana');
+    const bia = addUser(temp.db, 'bia', 'disabled');
+
+    expect(migrate(temp.db)).toBe(MIGRATIONS.length);
+    expect(schemaVersion(temp.db)).toBe(4);
+    const disabledAt = temp.db.prepare('SELECT id, disabled_at FROM users ORDER BY id').all();
+    expect(disabledAt).toEqual([
+      { id: ana, disabled_at: null },
+      { id: bia, disabled_at: NOW },
+    ]);
+    expect(temp.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    const indexes = (temp.db.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all() as Array<{ name: string }>).map(
+      (row) => row.name,
+    );
+    for (const name of [
+      'invite_blocks_inviter',
+      'invite_blocks_created',
+      'users_status_seen',
+      'sessions_expires',
+      'audit_log_actor',
+      'audit_log_target',
+      'tasks_created_by',
+      'board_members_invited_by',
+    ]) {
+      expect(indexes, name).toContain(name);
+    }
+  });
+
+  it('invite_blocks: um por par, nunca da pessoa para ela mesma, e some com qualquer uma das contas', () => {
+    temp = createTempDb();
+    const ana = addUser(temp.db, 'ana');
+    const bia = addUser(temp.db, 'bia');
+    const cris = addUser(temp.db, 'cris');
+    const block = temp.db.prepare('INSERT INTO invite_blocks (invitee_id, inviter_id, created_at) VALUES (?, ?, ?)');
+    block.run(bia, ana, NOW);
+    block.run(cris, ana, NOW);
+    expect(() => block.run(bia, ana, NOW)).toThrow(/UNIQUE|PRIMARY/);
+    expect(() => block.run(ana, ana, NOW)).toThrow(/constraint/i);
+    expect(() => block.run(bia, 999, NOW)).toThrow(/FOREIGN KEY/);
+
+    temp.db.prepare('DELETE FROM users WHERE id = ?').run(ana);
+    expect(temp.db.prepare('SELECT COUNT(*) AS n FROM invite_blocks').get()).toEqual({ n: 0 });
   });
 });

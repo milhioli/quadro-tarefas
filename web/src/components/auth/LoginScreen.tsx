@@ -1,11 +1,12 @@
 import { useId, useState, type FormEvent } from 'react';
 import { useAuthMethods, useDevLogin } from '../../api/account';
 import { describeError } from '../../api/client';
-import { LOGIN_OUTCOME_MESSAGES, googleStartUrl, type LoginOutcome } from '../../lib/login';
+import { LOGIN_NOTICES, googleStartUrl, type LoginNotice } from '../../lib/login';
+import { AppFooter } from '../AppFooter';
 
 export interface LoginScreenProps {
-  /** Resultado do último login (`?login=...`), se não deu certo. */
-  outcome: LoginOutcome | null;
+  /** Resultado do último login (`?login=...`) ou o aviso de conta apagada. */
+  outcome: LoginNotice | null;
   /** Para onde voltar depois de entrar (caminho do app). */
   next: string;
 }
@@ -35,9 +36,14 @@ export function LoginScreen({ outcome, next }: LoginScreenProps) {
         </h1>
         <p className="auth-card__lead">Entre para ver seus quadros e os grupos de que você participa.</p>
 
-        {outcome ? (
+        {outcome && LOGIN_NOTICES[outcome].tone === 'error' ? (
           <p className="form-error" role="alert">
-            {LOGIN_OUTCOME_MESSAGES[outcome]}
+            {LOGIN_NOTICES[outcome].text}
+          </p>
+        ) : null}
+        {outcome && LOGIN_NOTICES[outcome].tone === 'info' ? (
+          <p className="auth-card__notice" role="status">
+            {LOGIN_NOTICES[outcome].text}
           </p>
         ) : null}
 
@@ -91,6 +97,7 @@ export function LoginScreen({ outcome, next }: LoginScreenProps) {
           </form>
         ) : null}
       </section>
+      <AppFooter />
     </main>
   );
 }

@@ -1,3 +1,4 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -109,6 +110,83 @@ describe('main', () => {
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain('senha de app');
     expect((error as Error).message).not.toContain(password);
+  });
+
+  it('modo público (deploy): só o Host e o Origin do APP_ORIGIN, inclusive para o health check', async () => {
+    temp = createTempDb({ migrate: false });
+    const env: Record<string, string | undefined> = {
+      NODE_ENV: 'production',
+      API_PORT: '0',
+      DB_PATH: join(temp.dir, 'publico.sqlite'),
+      APP_ORIGIN: 'https://quadro.exemplo.com',
+      GOOGLE_CLIENT_ID: 'id.apps.googleusercontent.com',
+      GOOGLE_CLIENT_SECRET: 'GOCSPX-teste',
+      QUADRO_ADMIN_EMAIL: 'admin@exemplo.com',
+      QUADRO_CONTACT_EMAIL: 'contato@exemplo.com',
+      QUADRO_OPERATOR_NAME: 'Operador de Teste',
+    };
+    const oidcFetch = async () => {
+      throw new TypeError('sem rede no teste');
+    };
+    const webDistDir = join(temp.dir, 'dist');
+    // Sem o build do web, o modo público não sobe.
+    await expect(
+      main({ env: { ...env }, argv: ['node', 'src/index.ts'], loadDotEnv: false, logger: false, oidcFetch, webDistDir }),
+    ).rejects.toThrow(/npm run build/);
+    mkdirSync(webDistDir);
+    writeFileSync(join(webDistDir, 'index.html'), '<!doctype html><title>Quadro</title>');
+    const app = await main({ env, argv: ['node', 'src/index.ts'], loadDotEnv: false, logger: false, oidcFetch, webDistDir });
+    try {
+      expect((app.server.address() as AddressInfo).address).toBe('127.0.0.1');
+      const page = await app.inject({ method: 'GET', url: '/privacidade', headers: { host: 'quadro.exemplo.com' } });
+      expect(page.statusCode).toBe(200);
+      expect(page.headers['content-security-policy']).toContain("script-src 'self'");
+      const health = await app.inject({ method: 'GET', url: '/api/health', headers: { host: 'quadro.exemplo.com' } });
+      expect(health.statusCode).toBe(200);
+      // O loopback não é exceção: o HEALTHCHECK do contêiner manda o Host público.
+      for (const host of ['127.0.0.1:3001', '127.0.0.1:5173', 'quadro.exemplo.com:443', 'quadro.exemplo.com.evil.com']) {
+        const res = await app.inject({ method: 'GET', url: '/api/health', headers: { host } });
+        expect(res.statusCode, host).toBe(403);
+      }
+      const info = await app.inject({ method: 'GET', url: '/api/info', headers: { host: 'quadro.exemplo.com' } });
+      expect(info.json()).toEqual({ contactEmail: 'contato@exemplo.com', operatorName: 'Operador de Teste' });
+      const wrongOrigin = await app.inject({
+        method: 'POST',
+        url: '/api/auth/logout',
+        headers: { host: 'quadro.exemplo.com', origin: 'http://127.0.0.1:5173', 'x-quadro-client': '1' },
+      });
+      expect(wrongOrigin.statusCode).toBe(403);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('produção sem o que é obrigatório não sobe, e a agenda global é recusada', async () => {
+    temp = createTempDb({ migrate: false });
+    const base = {
+      NODE_ENV: 'production',
+      API_PORT: '0',
+      DB_PATH: join(temp.dir, 'recusa.sqlite'),
+      APP_ORIGIN: 'https://quadro.exemplo.com',
+    };
+    await expect(main({ env: { ...base }, argv: ['node', 'src/index.ts'], loadDotEnv: false, logger: false })).rejects.toThrow(
+      /Em produção, informe/,
+    );
+    const complete = {
+      ...base,
+      GOOGLE_CLIENT_ID: 'id.apps.googleusercontent.com',
+      GOOGLE_CLIENT_SECRET: 'GOCSPX-teste',
+      QUADRO_ADMIN_EMAIL: 'admin@exemplo.com',
+      QUADRO_CONTACT_EMAIL: 'contato@exemplo.com',
+      QUADRO_OPERATOR_NAME: 'Operador de Teste',
+    };
+    await expect(
+      main({ env: { ...complete }, argv: ['node', 'src/index.ts', '--agenda'], loadDotEnv: false, logger: false }),
+    ).rejects.toThrow(/--agenda/);
+    // https sem NODE_ENV=production também não sobe.
+    await expect(
+      main({ env: { ...complete, NODE_ENV: undefined }, argv: ['node', 'src/index.ts'], loadDotEnv: false, logger: false }),
+    ).rejects.toThrow(/pacote de deploy/);
   });
 
   it('o banco padrão fica em server/data', () => {
